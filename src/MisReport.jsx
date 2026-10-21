@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Printer, X } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import DateFilter from './DateFilter';
+import { normalizeDate, getTodayIso, getHistory, getFromHistory } from './dateHistory';
 import './App.css';
 
 const fmt = (n, d = 3) => {
@@ -12,6 +14,25 @@ const fmt = (n, d = 3) => {
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 
 export default function MisReport() {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    // Check if either report has a saved date
+    const cd = localStorage.getItem('consumptionData');
+    if (cd) {
+      try {
+        const p = JSON.parse(cd);
+        if (p.date) return normalizeDate(p.date);
+      } catch (e) {}
+    }
+    const bd = localStorage.getItem('billetData');
+    if (bd) {
+      try {
+        const p = JSON.parse(bd);
+        if (p.date) return normalizeDate(p.date);
+      } catch (e) {}
+    }
+    return getTodayIso();
+  });
+
   const [consData, setConsData] = useState(null);
   const [billetData, setBilletData] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -34,16 +55,45 @@ export default function MisReport() {
   const [draggedItem, setDraggedItem] = useState(null);
   const [combineModal, setCombineModal] = useState({ isOpen: false, sizeIdx: null, label: '', count: 0 });
 
+  // Function to load data for a specific date
+  const loadDataForDate = (isoDate) => {
+    const consHist = getHistory('consumptionHistory');
+    const billetHist = getHistory('billetHistory');
+
+    let cData = consHist[isoDate] || null;
+    let bData = billetHist[isoDate] || null;
+
+    // Fallback to active single report if date matches
+    if (!cData) {
+      const saved = localStorage.getItem('consumptionData');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (normalizeDate(parsed.date) === isoDate) cData = parsed;
+        } catch (e) {}
+      }
+    }
+    if (!bData) {
+      const saved = localStorage.getItem('billetData');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (normalizeDate(parsed.date) === isoDate) bData = parsed;
+        } catch (e) {}
+      }
+    }
+
+    setConsData(cData);
+    setBilletData(bData);
+  };
+
   useEffect(() => {
-    const cd = localStorage.getItem('consumptionData');
-    if (cd) {
-      try { setConsData(JSON.parse(cd)); } catch (e) {}
-    }
-    const bd = localStorage.getItem('billetData');
-    if (bd) {
-      try { setBilletData(JSON.parse(bd)); } catch (e) {}
-    }
-  }, []);
+    loadDataForDate(selectedDate);
+  }, [selectedDate]);
+
+  const handleDateChange = (newIsoDate) => {
+    setSelectedDate(newIsoDate);
+  };
 
   useEffect(() => {
     localStorage.setItem('misMergeConfig', JSON.stringify(mergeConfig));
@@ -173,12 +223,32 @@ export default function MisReport() {
     html2pdf().set(opt).from(element).save();
   };
 
+  const consDates = Object.keys(getHistory('consumptionHistory'));
+  const billetDates = Object.keys(getHistory('billetHistory'));
+  const availableDates = Array.from(new Set([...consDates, ...billetDates]));
+
   if (!consData || !billetData) {
     return (
       <div style={{ paddingBottom: '40px' }}>
-        <h1 className="page-title">MIS Report</h1>
-        <div className="card">
-          <p>Data is missing. Please ensure you have uploaded both the Consumption Report and Billet Report first.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+          <div>
+            <h1 className="page-title" style={{ margin: '0 0 4px' }}>MIS Report</h1>
+            <p className="page-subtitle" style={{ margin: 0 }}>Auto-generated from Consumption and Billet Data</p>
+          </div>
+          <DateFilter 
+            selectedDate={selectedDate} 
+            onDateChange={handleDateChange} 
+            availableDates={availableDates} 
+          />
+        </div>
+        <div className="card" style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+          <p style={{ margin: 0, fontSize: '15px' }}>
+            {!consData && !billetData 
+              ? `No saved Consumption or Billet data found for ${selectedDate}.` 
+              : !consData 
+                ? `Consumption Report is missing for ${selectedDate}. Please save Consumption Report for this date.` 
+                : `Billet Report is missing for ${selectedDate}. Please save Billet Report for this date.`}
+          </p>
         </div>
       </div>
     );
@@ -233,10 +303,15 @@ export default function MisReport() {
     <div style={{ paddingBottom: '40px' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
         <div>
-          <h1 className="page-title">MIS Report</h1>
+          <h1 className="page-title" style={{ margin: '0 0 4px' }}>MIS Report</h1>
           <p className="page-subtitle" style={{ margin: 0 }}>Auto-generated from Consumption and Billet Data</p>
         </div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <DateFilter 
+            selectedDate={selectedDate} 
+            onDateChange={handleDateChange} 
+            availableDates={availableDates} 
+          />
           <button onClick={() => setEditMode(!editMode)} style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px', background: editMode ? '#ef4444' : '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}>
             {editMode ? '✕ Exit Edit Mode' : '✎ Edit Mode'}
           </button>
@@ -399,6 +474,7 @@ export default function MisReport() {
                     opening: items.reduce((a, x) => a + num(x.opening), 0),
                     production: items.reduce((a, x) => a + num(x.production), 0),
                     transfer: items.reduce((a, x) => a + num(x.transfer), 0),
+                    returnBillet: items.reduce((a, x) => a + num(x.returnBillet), 0),
                     despatch: items.reduce((a, x) => a + num(x.despatch), 0),
                     closing: items.reduce((a, x) => a + num(x.closing), 0),
                     remarks: items.map(x => x.remarks).filter(Boolean).join(', ')
@@ -414,7 +490,7 @@ export default function MisReport() {
                       type: 'individual', position: i, itemIdx: i,
                       label: `BILLETS ${s.size} (${item.name})`, color: bg,
                       opening: num(item.opening), production: num(item.production),
-                      transfer: num(item.transfer), despatch: num(item.despatch),
+                      transfer: num(item.transfer), returnBillet: num(item.returnBillet), despatch: num(item.despatch),
                       closing: num(item.closing), remarks: item.remarks || ''
                     });
                   }
@@ -441,6 +517,7 @@ export default function MisReport() {
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>OPENING</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>PRODUCTION</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>TRANSFER</th>
+                      <th style={{ ...thStyle, borderTop: '2px solid #000' }}>RETURN BILLET</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>DISPATCH</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>CLOSING</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000', width: '18%' }}>REMARK</th>
@@ -491,6 +568,7 @@ export default function MisReport() {
                         <td style={{ ...tdStyle }}>{fmt(row.opening)}</td>
                         <td style={{ ...tdStyle }}>{fmt(row.production)}</td>
                         <td style={{ ...tdStyle }}>{fmt(row.transfer)}</td>
+                        <td style={{ ...tdStyle }}>{fmt(row.returnBillet)}</td>
                         <td style={{ ...tdStyle }}>{fmt(row.despatch)}</td>
                         <td style={{ ...tdStyle }}>{fmt(row.closing)}</td>
                         <td style={{ ...tdStyle, textAlign: 'left' }}>{row.remarks}</td>
@@ -499,7 +577,7 @@ export default function MisReport() {
                     {/* Combine button */}
                     {editMode && selected.length >= 2 && (
                       <tr>
-                        <td colSpan="9" style={{ ...tdStyle, background: '#f0fdf4', textAlign: 'center' }}>
+                        <td colSpan="10" style={{ ...tdStyle, background: '#f0fdf4', textAlign: 'center' }}>
                           <button onClick={() => combineSelected(idx)} style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
                             ✓ Combine {selected.length} rows
                           </button>

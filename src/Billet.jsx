@@ -3,13 +3,15 @@ import * as XLSX from 'xlsx';
 import { Printer, FileDown, Save, Check, Edit2, Trash2 } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
+import DateFilter from './DateFilter';
+import { normalizeDate, getTodayIso, getHistory, saveToHistory } from './dateHistory';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
 const fmt = (n, d = 2) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-const KEYS = ['opening', 'production', 'despatch', 'transfer', 'closing'];
-const LABELS = ['Opening', 'Production', 'Despatch', 'Transfer', 'Closing'];
-const sum = (a, k) => a.reduce((t, x) => t + x[k], 0);
+const KEYS = ['opening', 'production', 'despatch', 'transfer', 'returnBillet', 'closing'];
+const LABELS = ['Opening', 'Production', 'Despatch', 'Transfer', 'Return Billet', 'Closing'];
+const sum = (a, k) => a.reduce((t, x) => t + (num(x[k])), 0);
 const renderCell = (v, cls = '', label = '', key = undefined) => <td key={key} data-label={label} className={`${cls} ${v < 0 ? 'neg' : ''}`}>{fmt(v, 3)}</td>;
 
 function parseSheet(ws) {
@@ -32,13 +34,52 @@ function parseSheet(ws) {
       j++;
     }
     if (j >= rows.length || String(rows[j][1] || '').trim().toLowerCase() !== 'items') continue;
+    
+    // Find column indexes dynamically from the header row
+    const headerRow = rows[j] || [];
+    let closingCol = -1;
+    let remarksCol = -1;
+    let returnCol = -1;
+
+    headerRow.forEach((c, idx) => {
+      if (typeof c !== 'string') return;
+      const lower = c.trim().toLowerCase();
+      if (/return/i.test(lower)) returnCol = idx;
+      else if (/closing|stock|balance/i.test(lower)) closingCol = idx;
+      else if (/remark/i.test(lower)) remarksCol = idx;
+    });
+
+    // Defaults if headers weren't named with words
+    const hasReturnCol = returnCol !== -1;
+    if (closingCol === -1) closingCol = hasReturnCol ? 7 : 6;
+    if (remarksCol === -1) remarksCol = closingCol + 1;
+
     for (j = j + 1; j < rows.length; j++) {
       const r = rows[j];
       if (!has(r[1])) {
-        if (has(r[2]) || has(r[6])) sec.fileTotals = { opening: num(r[2]), production: num(r[3]), despatch: num(r[4]), transfer: num(r[5]), closing: num(r[6]) };
+        if (has(r[2]) || has(r[closingCol])) {
+          sec.fileTotals = {
+            opening: num(r[2]),
+            production: num(r[3]),
+            despatch: num(r[4]),
+            transfer: num(r[5]),
+            returnBillet: hasReturnCol ? num(r[returnCol]) : 0,
+            closing: num(r[closingCol])
+          };
+        }
         break;
       }
-      sec.items.push({ name: String(r[1]).trim(), opening: num(r[2]), production: num(r[3]), despatch: num(r[4]), transfer: num(r[5]), remarks: has(r[7]) ? String(r[7]).trim() : '', fileClosing: has(r[6]) ? num(r[6]) : null });
+
+      sec.items.push({
+        name: String(r[1]).trim(),
+        opening: num(r[2]),
+        production: num(r[3]),
+        despatch: num(r[4]),
+        transfer: num(r[5]),
+        returnBillet: hasReturnCol ? num(r[returnCol]) : 0,
+        remarks: has(r[remarksCol]) ? String(r[remarksCol]).trim() : '',
+        fileClosing: has(r[closingCol]) ? num(r[closingCol]) : null
+      });
     }
     secs.push(sec);
   }
@@ -50,8 +91,9 @@ function buildReport(title, date, secs, source) {
   const sizes = [], warns = [];
   secs.forEach(sec => {
     sec.items.forEach(it => {
-      // Round to 3 decimal places to avoid JS float precision issues (like -0.000)
-      it.closing = Math.round((it.opening + it.production - it.despatch - it.transfer) * 1000) / 1000;
+      // Return Billet is added back to stock: Closing = Opening + Production + Return Billet - Despatch - Transfer
+      const ret = num(it.returnBillet);
+      it.closing = Math.round((it.opening + it.production + ret - it.despatch - it.transfer) * 1000) / 1000;
       if (Math.abs(it.closing) < 0.00001) it.closing = 0;
       if (it.fileClosing !== null && Math.abs(it.fileClosing - it.closing) > 0.001)
         warns.push(`${sec.size}: ${it.name} ka closing ${source} me ${fmt(it.fileClosing, 3)} hai, jabki calculated ${fmt(it.closing, 3)} hai.`);
@@ -67,17 +109,54 @@ function buildReport(title, date, secs, source) {
 }
 
 export default function Billet() {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const saved = localStorage.getItem('billetData');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.date) return normalizeDate(parsed.date);
+      } catch (e) {}
+    }
+    return getTodayIso();
+  });
+
   const [data, setData] = useState(() => {
+    const hist = getHistory('billetHistory');
+    const today = getTodayIso();
+    if (hist[today]) return hist[today];
     const saved = localStorage.getItem('billetData');
     if (saved) {
       try { return JSON.parse(saved); } catch(e) { return null; }
     }
     return null;
   });
+
   const [isSaved, setIsSaved] = useState(false);
+
+  const handleDateChange = (newIsoDate) => {
+    setSelectedDate(newIsoDate);
+    const hist = getHistory('billetHistory');
+    if (hist[newIsoDate]) {
+      setData(hist[newIsoDate]);
+    } else {
+      const saved = localStorage.getItem('billetData');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (normalizeDate(parsed.date) === newIsoDate) {
+            setData(parsed);
+            return;
+          }
+        } catch (e) {}
+      }
+      setData(null);
+    }
+  };
 
   const handleSaveData = () => {
     if (!data) return;
+    const dateKey = normalizeDate(data.date) || selectedDate;
+    saveToHistory('billetHistory', dateKey, data);
     localStorage.setItem('billetData', JSON.stringify(data));
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
@@ -100,6 +179,10 @@ export default function Billet() {
       return;
     }
     setData(parsedData);
+    if (parsedData.date) {
+      const d = normalizeDate(parsedData.date);
+      if (d) setSelectedDate(d);
+    }
   };
 
   const handleAddSubmit = (e) => {
@@ -117,9 +200,10 @@ export default function Billet() {
         production: num(addFormData.production),
         despatch: num(addFormData.despatch),
         transfer: num(addFormData.transfer),
+        returnBillet: num(addFormData.returnBillet),
         remarks: addFormData.remarks
       };
-      newItem.closing = newItem.opening + newItem.production - newItem.despatch - newItem.transfer;
+      newItem.closing = Math.round((newItem.opening + newItem.production + newItem.returnBillet - newItem.despatch - newItem.transfer) * 1000) / 1000;
       
       if (editIndex !== null) {
         sizeSec.items[editIndex] = newItem;
@@ -141,13 +225,13 @@ export default function Billet() {
     
     setShowAddForm(null);
     setEditIndex(null);
-    setAddFormData({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, remarks: '' });
+    setAddFormData({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, returnBillet: 0, remarks: '' });
   };
 
   const openAdd = (sizeIdx) => {
     setShowAddForm(sizeIdx);
     setEditIndex(null);
-    setAddFormData({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, remarks: '' });
+    setAddFormData({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, returnBillet: 0, remarks: '' });
   };
 
   const openEdit = (sizeIdx, itemIdx) => {
@@ -156,7 +240,7 @@ export default function Billet() {
     const item = data.sizes[sizeIdx].items[itemIdx];
     setAddFormData({
       name: item.name, opening: item.opening, production: item.production, 
-      despatch: item.despatch, transfer: item.transfer, remarks: item.remarks
+      despatch: item.despatch, transfer: item.transfer, returnBillet: num(item.returnBillet), remarks: item.remarks
     });
   };
 
@@ -190,7 +274,7 @@ export default function Billet() {
         size: String(s.size || '').replace(/^\s*size\s*/i, '').trim(),
         fileTotals: s.fileTotals || null,
         items: (s.items || []).map(it => ({
-          name: String(it.name || '').trim(), opening: num(it.opening), production: num(it.production), despatch: num(it.despatch), transfer: num(it.transfer),
+          name: String(it.name || '').trim(), opening: num(it.opening), production: num(it.production), despatch: num(it.despatch), transfer: num(it.transfer), returnBillet: num(it.returnBillet),
           remarks: has(it.remarks) ? String(it.remarks).trim() : '', fileClosing: has(it.fileClosing) ? num(it.fileClosing) : null
         }))
       })).filter(s => s.items.length);
@@ -200,6 +284,10 @@ export default function Billet() {
       if (verifyError) report.verifyNotes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
       report.verified = !verifyError && !issues.length;
       setData(report);
+      if (report.date) {
+        const d = normalizeDate(report.date);
+        if (d) setSelectedDate(d);
+      }
     } catch (e) {
       alert(e.message);
     } finally {
@@ -225,12 +313,11 @@ export default function Billet() {
 
   const downloadCsv = () => {
     const q = v => '"' + String(v).replace(/"/g, '""') + '"';
-    const L = [['Date', data.date], ['Size', 'Item', 'Opening', 'Production', 'Despatch', 'Transfer', 'Closing', 'Remarks']];
+    const L = [['Date', data.date], ['Size', 'Item', 'Opening', 'Production', 'Despatch', 'Transfer', 'Return Billet', 'Closing', 'Remarks']];
     data.sizes.forEach(s => {
-      s.items.forEach(x => L.push([s.size, x.name, x.opening, x.production, x.despatch, x.transfer, x.closing, x.remarks]));
-      L.push([s.size, 'TOTAL', s.totals.opening, s.totals.production, s.totals.despatch, s.totals.transfer, s.totals.closing, '']);
+      s.items.forEach(x => L.push([s.size, x.name, x.opening, x.production, x.despatch, x.transfer, x.returnBillet || 0, x.closing, x.remarks]));
+      L.push([s.size, 'TOTAL', s.totals.opening, s.totals.production, s.totals.despatch, s.totals.transfer, s.totals.returnBillet || 0, s.totals.closing, '']);
     });
-    L.push(['ALL', 'GRAND TOTAL', data.grand.opening, data.grand.production, data.grand.despatch, data.grand.transfer, data.grand.closing, '']);
     const csvContent = '\ufeff' + L.map(r => r.map(q).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -253,10 +340,21 @@ export default function Billet() {
     html2pdf().set(opt).from(element).save();
   };
 
+  const availableDates = Object.keys(getHistory('billetHistory'));
+
   return (
     <div style={{ paddingBottom: '40px' }}>
-      <h1 className="page-title">Billet Report    </h1>
-      <p className="page-subtitle">Upload Excel (.xlsx) file — size-wise data will be automatically extracted.</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+        <div>
+          <h1 className="page-title" style={{ margin: '0 0 4px' }}>Billet Report</h1>
+          <p className="page-subtitle" style={{ margin: 0 }}>Upload Excel or Image file — size-wise data will be automatically extracted.</p>
+        </div>
+        <DateFilter 
+          selectedDate={selectedDate} 
+          onDateChange={handleDateChange} 
+          availableDates={availableDates} 
+        />
+      </div>
 
       <label 
         className={`drop ${isDragOver ? 'over' : ''}`}
@@ -335,7 +433,7 @@ export default function Billet() {
             <div className="scroll">
               <table className="responsive-table">
                 <thead>
-                  <tr><th style={{textAlign: 'left'}}>Size</th><th>Opening</th><th>Production</th><th>Despatch</th><th>Transfer</th><th>Closing</th></tr>
+                  <tr><th style={{textAlign: 'left'}}>Size</th><th>Opening</th><th>Production</th><th>Despatch</th><th>Transfer</th><th>Return Billet</th><th>Closing</th></tr>
                 </thead>
                 <tbody>
                   {data.sizes.map((s, i) => (
@@ -364,7 +462,7 @@ export default function Billet() {
               <div className="scroll">
                 <table className="responsive-table">
                   <thead>
-                    <tr><th style={{textAlign: 'left'}}>Item</th><th>Opening</th><th>Production</th><th>Despatch</th><th>Transfer</th><th>Closing</th><th style={{textAlign: 'left'}}>Remarks</th><th style={{textAlign: 'center', width: '100px'}}>Action</th></tr>
+                    <tr><th style={{textAlign: 'left'}}>Item</th><th>Opening</th><th>Production</th><th>Despatch</th><th>Transfer</th><th>Return Billet</th><th>Closing</th><th style={{textAlign: 'left'}}>Remarks</th><th style={{textAlign: 'center', width: '100px'}}>Action</th></tr>
                   </thead>
                   <tbody>
                     {s.items.map((x, j) => (
@@ -443,6 +541,10 @@ export default function Billet() {
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '14px', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '6px' }}>Transfer</label>
                   <input type="number" step="any" value={addFormData.transfer} onChange={e => setAddFormData({...addFormData, transfer: e.target.value})} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '15px', background: '#f8fafc', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '14px', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '6px' }}>Return Billet</label>
+                  <input type="number" step="any" value={addFormData.returnBillet || ''} onChange={e => setAddFormData({...addFormData, returnBillet: e.target.value})} style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '15px', background: '#f8fafc', boxSizing: 'border-box' }} placeholder="0" />
                 </div>
               </div>
               

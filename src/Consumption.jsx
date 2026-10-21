@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
+import DateFilter from './DateFilter';
+import { normalizeDate, getTodayIso, getHistory, saveToHistory } from './dateHistory';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
@@ -75,17 +77,56 @@ function buildData(date, raw, charge, S) {
 }
 
 function Consumption() {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const saved = localStorage.getItem('consumptionData');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.date) return normalizeDate(parsed.date);
+      } catch (e) {}
+    }
+    return getTodayIso();
+  });
+
   const [data, setData] = useState(() => {
+    const hist = getHistory('consumptionHistory');
+    const today = getTodayIso();
+    if (hist[today]) return hist[today];
     const saved = localStorage.getItem('consumptionData');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { return null; }
     }
     return null;
   });
+
   const [isSaved, setIsSaved] = useState(false);
+
+  // When selectedDate changes, load data for that date from history
+  const handleDateChange = (newIsoDate) => {
+    setSelectedDate(newIsoDate);
+    const hist = getHistory('consumptionHistory');
+    if (hist[newIsoDate]) {
+      setData(hist[newIsoDate]);
+    } else {
+      // If legacy consumptionData matches this date, use it
+      const saved = localStorage.getItem('consumptionData');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (normalizeDate(parsed.date) === newIsoDate) {
+            setData(parsed);
+            return;
+          }
+        } catch (e) {}
+      }
+      setData(null);
+    }
+  };
 
   const handleSaveData = () => {
     if (!data) return;
+    const dateKey = normalizeDate(data.date) || selectedDate;
+    saveToHistory('consumptionHistory', dateKey, data);
     localStorage.setItem('consumptionData', JSON.stringify(data));
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
@@ -216,6 +257,10 @@ function Consumption() {
       return;
     }
     setData(parsedData);
+    if (parsedData.date) {
+      const d = normalizeDate(parsedData.date);
+      if (d) setSelectedDate(d);
+    }
   };
 
   const handleFile = (file) => {
@@ -249,6 +294,10 @@ function Consumption() {
       const notes = issues.map(i => `Verifier correction — ${formatIssue(i)}`);
       if (verifyError) notes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
       setData({ ...buildData(ex.date || '', raw, charge, S), verifyNotes: notes, verified: !verifyError && !issues.length });
+      if (ex.date) {
+        const d = normalizeDate(ex.date);
+        if (d) setSelectedDate(d);
+      }
     } catch (e) {
       alert(e.message);
     } finally {
@@ -339,10 +388,21 @@ function Consumption() {
 
   const warns = data ? [...data.raw, ...data.charge].filter(x => x.closing < 0).map(x => `Closing stock for ${x.name} is negative (${fmt(x.closing, 3)}) — please check opening/received/consumed.`) : [];
 
+  const availableDates = Object.keys(getHistory('consumptionHistory'));
+
   return (
     <div className="wrap">
-      <h1 className="page-title">Consumption Report </h1>
-      <div className="page-subtitle">Upload Excel (.xlsx) file — data will be automatically extracted into tables, summaries, and download options.</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+        <div>
+          <h1 className="page-title" style={{ margin: '0 0 4px' }}>Consumption Report</h1>
+          <div className="page-subtitle" style={{ margin: 0 }}>Upload Excel or Image file — data will be automatically extracted into tables.</div>
+        </div>
+        <DateFilter 
+          selectedDate={selectedDate} 
+          onDateChange={handleDateChange} 
+          availableDates={availableDates} 
+        />
+      </div>
 
       <label 
         className={`drop ${isDragOver ? 'over' : ''}`} 

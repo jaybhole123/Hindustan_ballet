@@ -78,16 +78,17 @@ Section meanings: "raw" = Raw Material table (alloys/coal): Opening, Received, T
       "production": number,
       "despatch": number,
       "transfer": number,
+      "returnBillet": number,
       "fileClosing": number,
       "remarks": "string"
     }],
-    "fileTotals": { "opening": number, "production": number, "despatch": number, "transfer": number, "closing": number } | null
+    "fileTotals": { "opening": number, "production": number, "despatch": number, "transfer": number, "returnBillet": number, "closing": number } | null
   }]
 }
 For Billet Report:
-- The standard columns from left to right are: Item Name | Opening | Production | Despatch | Transfer | Closing (or Stock) | Remarks.
-- Ensure values are assigned to the correct column: Opening is 1st numeric column, Production 2nd, Despatch 3rd, Transfer 4th, Closing is 5th numeric column (fileClosing).
-- Notice that in steel plants: Closing = Opening + Production - Despatch - Transfer. Use this arithmetic to verify you did not swap columns (e.g. putting Closing into Opening or Despatch into Transfer).
+- The standard columns from left to right are: Item Name | Opening | Production | Despatch | Transfer | Return Billet (if printed, else 0) | Closing (or Stock) | Remarks.
+- Ensure values are assigned to the correct column: Opening is 1st numeric column, Production 2nd, Despatch 3rd, Transfer 4th, Return Billet is 5th numeric column (0 if not present), Closing is the stock/closing numeric column (fileClosing).
+- Notice that in steel plants: Closing = Opening + Production + Return Billet - Despatch - Transfer. Use this arithmetic to verify you did not swap columns.
 - Copy decimal numbers with exact 3-decimal precision as printed (e.g. 25.260, 3.742, 175.140).`
 };
 
