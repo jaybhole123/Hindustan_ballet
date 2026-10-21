@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Printer, FileDown } from 'lucide-react';
+import { Printer, FileDown, Save, Check, Edit2, Trash2 } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
 
@@ -10,7 +10,7 @@ const fmt = (n, d = 2) => Number(n).toLocaleString('en-IN', { minimumFractionDig
 const KEYS = ['opening', 'production', 'despatch', 'transfer', 'closing'];
 const LABELS = ['Opening', 'Production', 'Despatch', 'Transfer', 'Closing'];
 const sum = (a, k) => a.reduce((t, x) => t + x[k], 0);
-const renderCell = (v, cls = '', label = '') => <td data-label={label} className={`${cls} ${v < 0 ? 'neg' : ''}`}>{fmt(v, 3)}</td>;
+const renderCell = (v, cls = '', label = '', key = undefined) => <td key={key} data-label={label} className={`${cls} ${v < 0 ? 'neg' : ''}`}>{fmt(v, 3)}</td>;
 
 function parseSheet(ws) {
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
@@ -50,10 +50,12 @@ function buildReport(title, date, secs, source) {
   const sizes = [], warns = [];
   secs.forEach(sec => {
     sec.items.forEach(it => {
-      it.closing = it.opening + it.production - it.despatch - it.transfer;
-      if (it.fileClosing !== null && Math.abs(it.fileClosing - it.closing) > 0.0005)
+      // Round to 3 decimal places to avoid JS float precision issues (like -0.000)
+      it.closing = Math.round((it.opening + it.production - it.despatch - it.transfer) * 1000) / 1000;
+      if (Math.abs(it.closing) < 0.00001) it.closing = 0;
+      if (it.fileClosing !== null && Math.abs(it.fileClosing - it.closing) > 0.001)
         warns.push(`${sec.size}: ${it.name} ka closing ${source} me ${fmt(it.fileClosing, 3)} hai, jabki calculated ${fmt(it.closing, 3)} hai.`);
-      if (it.closing < 0) warns.push(`${sec.size}: ${it.name} ka closing negative hai (${fmt(it.closing, 3)}).`);
+      if (it.closing < -0.0009) warns.push(`${sec.size}: ${it.name} ka closing negative hai (${fmt(it.closing, 3)}).`);
     });
     sec.totals = {};
     KEYS.forEach(k => sec.totals[k] = sum(sec.items, k));
@@ -72,6 +74,14 @@ export default function Billet() {
     }
     return null;
   });
+  const [isSaved, setIsSaved] = useState(false);
+
+  const handleSaveData = () => {
+    if (!data) return;
+    localStorage.setItem('billetData', JSON.stringify(data));
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 3000);
+  };
   const [workbook, setWorkbook] = useState(null);
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
@@ -81,10 +91,6 @@ export default function Billet() {
   const [showAddForm, setShowAddForm] = useState(null);
   const [editIndex, setEditIndex] = useState(null);
   const [addFormData, setAddFormData] = useState({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, remarks: '' });
-
-  useEffect(() => {
-    if (data) localStorage.setItem('billetData', JSON.stringify(data));
-  }, [data]);
 
   const loadSheet = (wb, name) => {
     setSelectedSheet(name);
@@ -249,7 +255,7 @@ export default function Billet() {
 
   return (
     <div style={{ paddingBottom: '40px' }}>
-      <h1 className="page-title">Billet Report Extractor</h1>
+      <h1 className="page-title">Billet Report    </h1>
       <p className="page-subtitle">Upload Excel (.xlsx) file — size-wise data will be automatically extracted.</p>
 
       <label 
@@ -287,6 +293,21 @@ export default function Billet() {
             <button onClick={downloadCsv} style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', color: 'var(--ink)'}}>
               <FileDown size={16} /> Download Excel
             </button>
+            <button 
+              onClick={handleSaveData} 
+              style={{
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px', 
+                background: isSaved ? '#10b981' : '#2563eb', 
+                color: '#fff', 
+                fontWeight: '600',
+                transition: 'background 0.2s'
+              }}
+            >
+              {isSaved ? <Check size={16} /> : <Save size={16} />} 
+              {isSaved ? 'Saved Locally!' : 'Save Report'}
+            </button>
           </div>
 
           {data.verified && <div className="warn" style={{ marginTop: '16px', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '12px', borderRadius: '8px' }}>✔ Image data verified — second pass me koi mismatch nahi mila.</div>}
@@ -320,14 +341,14 @@ export default function Billet() {
                   {data.sizes.map((s, i) => (
                     <tr key={i}>
                       <td data-label="Size" style={{textAlign: 'left'}}>{s.size}</td>
-                      {KEYS.map((k, idx) => renderCell(s.totals[k], '', LABELS[idx]))}
+                      {KEYS.map((k, idx) => renderCell(s.totals[k], '', LABELS[idx], k))}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
                     <td data-label="Total" style={{textAlign: 'left'}}>Grand Total</td>
-                    {KEYS.map((k, idx) => renderCell(data.grand[k], '', LABELS[idx]))}
+                    {KEYS.map((k, idx) => renderCell(data.grand[k], '', LABELS[idx], k))}
                   </tr>
                 </tfoot>
               </table>
@@ -349,23 +370,27 @@ export default function Billet() {
                     {s.items.map((x, j) => (
                       <tr key={j} className={x.closing < 0 ? 'neg-row' : ''}>
                         <td data-label="Item" style={{textAlign: 'left'}}>{x.name}</td>
-                        {KEYS.map((k, idx) => renderCell(x[k], '', LABELS[idx]))}
+                        {KEYS.map((k, idx) => renderCell(x[k], '', LABELS[idx], k))}
                         <td data-label="Remarks" style={{textAlign: 'left'}}>{x.remarks}</td>
-                        <td data-label="Action" style={{textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '8px', paddingTop: '10px'}}>
-                          <button onClick={() => openEdit(i, j)} style={{ background: '#eef2ff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px' }} title="Edit">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M12 20h9"></path>
-                              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                            </svg>
-                          </button>
-                          <button onClick={() => handleDelete(i, j)} style={{ background: '#fef2f2', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '6px' }} title="Delete">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="3 6 5 6 21 6"></polyline>
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                              <line x1="10" y1="11" x2="10" y2="17"></line>
-                              <line x1="14" y1="11" x2="14" y2="17"></line>
-                            </svg>
-                          </button>
+                        <td data-label="Action" style={{textAlign: 'center'}}>
+                          <div style={{display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center'}}>
+                            <button 
+                              type="button"
+                              onClick={() => openEdit(i, j)} 
+                              style={{ padding: '6px', background: '#eef2ff', color: '#4f46e5', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
+                              title="Edit"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleDelete(i, j)} 
+                              style={{ padding: '6px', background: '#fef2f2', color: '#ef4444', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
+                              title="Delete"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -373,7 +398,7 @@ export default function Billet() {
                   <tfoot>
                     <tr>
                       <td data-label="Total" style={{textAlign: 'left'}}>Total</td>
-                      {KEYS.map((k, idx) => renderCell(s.totals[k], '', LABELS[idx]))}
+                      {KEYS.map((k, idx) => renderCell(s.totals[k], '', LABELS[idx], k))}
                       <td data-label=""></td>
                       <td data-label=""></td>
                     </tr>

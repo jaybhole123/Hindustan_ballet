@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Printer } from 'lucide-react';
+import { Printer, X } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import './App.css';
 
@@ -32,6 +32,7 @@ export default function MisReport() {
     return {};
   });
   const [draggedItem, setDraggedItem] = useState(null);
+  const [combineModal, setCombineModal] = useState({ isOpen: false, sizeIdx: null, label: '', count: 0 });
 
   useEffect(() => {
     const cd = localStorage.getItem('consumptionData');
@@ -73,17 +74,34 @@ export default function MisReport() {
       alert('Please select at least 2 rows to combine.');
       return;
     }
-    const label = prompt('Enter a label for the combined row:');
-    if (!label) return;
+    setCombineModal({
+      isOpen: true,
+      sizeIdx,
+      label: '',
+      count: selected.length
+    });
+  };
+
+  const handleConfirmCombine = (e) => {
+    if (e) e.preventDefault();
+    const { sizeIdx, label } = combineModal;
+    if (!label.trim()) return;
+
+    const selected = selectedRows[sizeIdx];
+    if (!selected || selected.length < 2) {
+      setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 });
+      return;
+    }
+
     const indices = [...selected].sort((a, b) => a - b);
-    const newGroup = { label, indices, color: '#ffffff' };
+    const newGroup = { label: label.trim(), indices, color: '#ffffff' };
     setMergeConfig(prev => {
       const existing = prev[sizeIdx] || [];
-      // Remove any existing groups that overlap with these indices
       const filtered = existing.filter(g => !g.indices.some(i => indices.includes(i)));
       return { ...prev, [sizeIdx]: [...filtered, newGroup] };
     });
     setSelectedRows(prev => ({ ...prev, [sizeIdx]: [] }));
+    setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 });
   };
 
   const changeColor = (sizeIdx, index, isMerged, newColor) => {
@@ -556,6 +574,82 @@ export default function MisReport() {
 
         </div>
       </div>
+
+      {combineModal.isOpen && (
+        <div className="modal-overlay" onClick={() => setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 })}>
+          <div className="modal-content" style={{ maxWidth: '440px', padding: '24px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>Combine {combineModal.count} Selected Rows</h3>
+              <button 
+                type="button" 
+                className="modal-close-btn" 
+                onClick={() => setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 })}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleConfirmCombine}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#475569', marginBottom: '8px' }}>
+                  Enter Label for Combined Row:
+                </label>
+                <input 
+                  autoFocus 
+                  required 
+                  type="text" 
+                  value={combineModal.label} 
+                  onChange={e => setCombineModal(prev => ({ ...prev, label: e.target.value }))}
+                  placeholder="e.g. Combined Tested Billets"
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '14px',
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 })}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                    color: '#475569',
+                    fontWeight: '500',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!combineModal.label.trim()}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: '#2563eb',
+                    color: '#ffffff',
+                    fontWeight: '600',
+                    cursor: combineModal.label.trim() ? 'pointer' : 'not-allowed',
+                    opacity: combineModal.label.trim() ? 1 : 0.6
+                  }}
+                >
+                  Combine Rows
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

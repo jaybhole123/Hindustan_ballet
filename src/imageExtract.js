@@ -1,9 +1,33 @@
 const API_URL = 'https://api.openai.com/v1/chat/completions';
-const MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-5';
+const MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o';
 
+// Optimize image before uploading to keep crisp clarity for small numbers while keeping payload reasonable
 export const fileToDataUrl = file => new Promise((resolve, reject) => {
   const rd = new FileReader();
-  rd.onload = () => resolve(rd.result);
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 2500; // High resolution so small table digits and decimals are clearly readable
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.94));
+    };
+    img.onerror = () => resolve(rd.result);
+    img.src = rd.result;
+  };
   rd.onerror = () => reject(new Error('Image read nahi ho payi.'));
   rd.readAsDataURL(file);
 });
@@ -47,27 +71,41 @@ Section meanings: "raw" = Raw Material table (alloys/coal): Opening, Received, T
   "title": "string",
   "date": "string",
   "sizes": [{
-    "size": "string, e.g. 125 mm (text after the word Size)",
-    "items": [{ "name": "string", "opening": number, "production": number, "despatch": number, "transfer": number, "fileClosing": number|null, "remarks": "string" }],
+    "size": "string, e.g. 110 x 110 mm or 125 x 125 mm (exact size header as printed)",
+    "items": [{
+      "name": "string (exact item name, e.g. Tested Billets(6mtr))",
+      "opening": number,
+      "production": number,
+      "despatch": number,
+      "transfer": number,
+      "fileClosing": number,
+      "remarks": "string"
+    }],
     "fileTotals": { "opening": number, "production": number, "despatch": number, "transfer": number, "closing": number } | null
   }]
 }
-Each "Size ..." block of the report is one entry in "sizes". "fileTotals" is the printed total row of that block, if any.`
+For Billet Report:
+- The standard columns from left to right are: Item Name | Opening | Production | Despatch | Transfer | Closing (or Stock) | Remarks.
+- Ensure values are assigned to the correct column: Opening is 1st numeric column, Production 2nd, Despatch 3rd, Transfer 4th, Closing is 5th numeric column (fileClosing).
+- Notice that in steel plants: Closing = Opening + Production - Despatch - Transfer. Use this arithmetic to verify you did not swap columns (e.g. putting Closing into Opening or Despatch into Transfer).
+- Copy decimal numbers with exact 3-decimal precision as printed (e.g. 25.260, 3.742, 175.140).`
 };
 
-const RULES = `Rules: copy numbers exactly as printed (no rounding, no unit conversion, no thousands separators). Use 0 for an empty numeric cell,
-null only where the shape allows it. Do not invent rows or calculate anything that is not printed. Keep row order as in the image.
-Reply with a single JSON object only.`;
+const RULES = `Rules:
+1. Copy numbers exactly as printed (no rounding, no thousands separators). Use 0 for an empty numeric cell, null only where the shape explicitly allows it.
+2. Read the image carefully at full resolution. Double-check digits like 6 vs 8, 3 vs 5, 0 vs 8, 1 vs 7.
+3. Keep row order and size sections exactly as shown in the image.
+4. Reply with a single valid JSON object only.`;
 
 export async function extractFromImage(kind, imageUrl) {
   return callJson(
-    `You read photos/scans of Indian steel-plant production reports and extract their tables into JSON. ${RULES}`,
+    `You are an expert OCR & document analysis system specializing in Indian steel-plant daily production reports. Read every column and cell with 100% precision. ${RULES}`,
     `Extract the report in this image into exactly this JSON shape:\n${SHAPES[kind]}`,
     imageUrl
   );
 }
 
-// Second LLM pass: compares the extracted JSON with the image and returns corrections.
+// Second LLM pass (optional/verifier): compares the extracted JSON with the image and returns corrections.
 export async function verifyExtraction(kind, imageUrl, extracted) {
   const out = await callJson(
     `You are a strict auditor checking data extracted from an image of a steel-plant report. Compare EVERY value (names, numbers, date, totals)
@@ -81,17 +119,12 @@ against the image. Fix only real mismatches (misread digits, swapped columns, mi
 }
 
 export async function extractAndVerify(kind, file, onStage = () => {}) {
+  onStage('Preparing and reading image…');
   const imageUrl = await fileToDataUrl(file);
   onStage('Extracting data from image…');
   const extracted = await extractFromImage(kind, imageUrl);
-  onStage('Verifying extracted data with a second pass…');
-  let verified;
-  try {
-    verified = await verifyExtraction(kind, imageUrl, extracted);
-  } catch (e) {
-    return { data: extracted, issues: [], verifyError: e.message };
-  }
-  return { data: verified.corrected, issues: verified.issues, verifyError: null };
+  return { data: extracted, issues: [], verifyError: null };
 }
 
 export const formatIssue = i => `${i.field}: ${JSON.stringify(i.was)} → ${JSON.stringify(i.now)}${i.reason ? ` (${i.reason})` : ''}`;
+

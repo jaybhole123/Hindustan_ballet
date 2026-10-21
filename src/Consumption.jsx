@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Printer, FileDown, Plus, X, Edit2, Trash2 } from 'lucide-react';
+import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
 
@@ -82,12 +82,14 @@ function Consumption() {
     }
     return null;
   });
+  const [isSaved, setIsSaved] = useState(false);
 
-  useEffect(() => {
-    if (data) {
-      localStorage.setItem('consumptionData', JSON.stringify(data));
-    }
-  }, [data]);
+  const handleSaveData = () => {
+    if (!data) return;
+    localStorage.setItem('consumptionData', JSON.stringify(data));
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 3000);
+  };
   const [workbook, setWorkbook] = useState(null);
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
@@ -339,7 +341,7 @@ function Consumption() {
 
   return (
     <div className="wrap">
-      <h1 className="page-title">Consumption Report Extractor</h1>
+      <h1 className="page-title">Consumption Report </h1>
       <div className="page-subtitle">Upload Excel (.xlsx) file — data will be automatically extracted into tables, summaries, and download options.</div>
 
       <label 
@@ -378,6 +380,21 @@ function Consumption() {
             </button>
             <button onClick={downloadCsv} style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', color: 'var(--ink)'}}>
               <FileDown size={16} /> Download Excel
+            </button>
+            <button 
+              onClick={handleSaveData} 
+              style={{
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px', 
+                background: isSaved ? '#10b981' : '#2563eb', 
+                color: '#fff', 
+                fontWeight: '600',
+                transition: 'background 0.2s'
+              }}
+            >
+              {isSaved ? <Check size={16} /> : <Save size={16} />} 
+              {isSaved ? 'Saved Locally!' : 'Save Report'}
             </button>
           </div>
           
