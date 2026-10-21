@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Printer, FileDown } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { extractAndVerify, formatIssue } from './imageExtract';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
@@ -20,7 +21,7 @@ function parseSheet(ws) {
     if (/^\s*date/i.test(c) && !date) date = c.replace(/^\s*date\s*[-:]?\s*/i, '').replace(/\s*\/\s*/g, '/').trim();
   }));
 
-  const sizes = [], warns = [];
+  const secs = [];
   for (let i = 0; i < rows.length; i++) {
     const a = rows[i][0];
     if (!(typeof a === 'string' && /^\s*size/i.test(a))) continue;
@@ -37,18 +38,27 @@ function parseSheet(ws) {
         if (has(r[2]) || has(r[6])) sec.fileTotals = { opening: num(r[2]), production: num(r[3]), despatch: num(r[4]), transfer: num(r[5]), closing: num(r[6]) };
         break;
       }
-      const it = { name: String(r[1]).trim(), opening: num(r[2]), production: num(r[3]), despatch: num(r[4]), transfer: num(r[5]), remarks: has(r[7]) ? String(r[7]).trim() : '' };
-      it.closing = it.opening + it.production - it.despatch - it.transfer;
-      it.fileClosing = has(r[6]) ? num(r[6]) : null;
-      if (it.fileClosing !== null && Math.abs(it.fileClosing - it.closing) > 0.0005)
-        warns.push(`${sec.size}: ${it.name} ka closing Excel me ${fmt(it.fileClosing, 3)} hai, jabki calculated ${fmt(it.closing, 3)} hai.`);
-      if (it.closing < 0) warns.push(`${sec.size}: ${it.name} ka closing negative hai (${fmt(it.closing, 3)}).`);
-      sec.items.push(it);
+      sec.items.push({ name: String(r[1]).trim(), opening: num(r[2]), production: num(r[3]), despatch: num(r[4]), transfer: num(r[5]), remarks: has(r[7]) ? String(r[7]).trim() : '', fileClosing: has(r[6]) ? num(r[6]) : null });
     }
+    secs.push(sec);
+  }
+  return buildReport(title, date, secs, 'Excel');
+}
+
+// Calculates closing, totals and warnings; shared by Excel and image extraction
+function buildReport(title, date, secs, source) {
+  const sizes = [], warns = [];
+  secs.forEach(sec => {
+    sec.items.forEach(it => {
+      it.closing = it.opening + it.production - it.despatch - it.transfer;
+      if (it.fileClosing !== null && Math.abs(it.fileClosing - it.closing) > 0.0005)
+        warns.push(`${sec.size}: ${it.name} ka closing ${source} me ${fmt(it.fileClosing, 3)} hai, jabki calculated ${fmt(it.closing, 3)} hai.`);
+      if (it.closing < 0) warns.push(`${sec.size}: ${it.name} ka closing negative hai (${fmt(it.closing, 3)}).`);
+    });
     sec.totals = {};
     KEYS.forEach(k => sec.totals[k] = sum(sec.items, k));
     sizes.push(sec);
-  }
+  });
   const grand = {};
   KEYS.forEach(k => grand[k] = sizes.reduce((t, s) => t + s.totals[k], 0));
   return { title, date, sizes, grand, warns };
@@ -66,6 +76,8 @@ export default function Billet() {
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isImgOver, setIsImgOver] = useState(false);
+  const [imgStatus, setImgStatus] = useState('');
   const [showAddForm, setShowAddForm] = useState(null);
   const [editIndex, setEditIndex] = useState(null);
   const [addFormData, setAddFormData] = useState({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, remarks: '' });
@@ -163,6 +175,32 @@ export default function Billet() {
     });
   };
 
+  const handleImage = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('Please select an image file (png, jpg, webp).'); return; }
+    try {
+      const { data: ex, issues, verifyError } = await extractAndVerify('billet', file, setImgStatus);
+      const secs = (ex.sizes || []).map(s => ({
+        size: String(s.size || '').replace(/^\s*size\s*/i, '').trim(),
+        fileTotals: s.fileTotals || null,
+        items: (s.items || []).map(it => ({
+          name: String(it.name || '').trim(), opening: num(it.opening), production: num(it.production), despatch: num(it.despatch), transfer: num(it.transfer),
+          remarks: has(it.remarks) ? String(it.remarks).trim() : '', fileClosing: has(it.fileClosing) ? num(it.fileClosing) : null
+        }))
+      })).filter(s => s.items.length);
+      if (!secs.length) { alert('Image me expected data nahi mila.'); return; }
+      const report = buildReport(ex.title || '', ex.date || '', secs, 'image');
+      report.verifyNotes = issues.map(i => `Verifier correction — ${formatIssue(i)}`);
+      if (verifyError) report.verifyNotes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
+      report.verified = !verifyError && !issues.length;
+      setData(report);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setImgStatus('');
+    }
+  };
+
   const handleFile = (file) => {
     const rd = new FileReader();
     rd.onload = e => {
@@ -224,6 +262,17 @@ export default function Billet() {
         <div><b>Drop Excel file here</b> or click to select</div>
       </label>
 
+      <label
+        className={`drop ${isImgOver ? 'over' : ''}`}
+        style={{ marginTop: '12px' }}
+        onDragOver={e => { e.preventDefault(); setIsImgOver(true); }}
+        onDragLeave={() => setIsImgOver(false)}
+        onDrop={e => { e.preventDefault(); setIsImgOver(false); handleImage(e.dataTransfer.files[0]); }}
+      >
+        <input type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={!!imgStatus} onChange={e => { handleImage(e.target.files[0]); e.target.value = ''; }} />
+        <div>{imgStatus ? <b>{imgStatus}</b> : <><b>Drop Image here</b> or click to select (AI extraction + verification)</>}</div>
+      </label>
+
       {data && (
         <div id="billet-out" style={{ marginTop: '24px' }}>
           <div className="bar">
@@ -239,6 +288,13 @@ export default function Billet() {
               <FileDown size={16} /> Download Excel
             </button>
           </div>
+
+          {data.verified && <div className="warn" style={{ marginTop: '16px', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '12px', borderRadius: '8px' }}>✔ Image data verified — second pass me koi mismatch nahi mila.</div>}
+          {data.verifyNotes?.length > 0 && (
+            <div className="warn" style={{ marginTop: '16px', background: '#fff4e5', border: '1px solid #ffcc80', padding: '12px', borderRadius: '8px' }}>
+              {data.verifyNotes.map((w, i) => <div key={i}>🔍 {w}</div>)}
+            </div>
+          )}
 
           {data.warns && data.warns.length > 0 && (
             <div className="warn" style={{ marginTop: '16px', background: '#fff4e5', border: '1px solid #ffcc80', padding: '12px', borderRadius: '8px' }}>

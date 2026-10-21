@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Printer, FileDown, Plus, X, Edit2, Trash2 } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { extractAndVerify, formatIssue } from './imageExtract';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
@@ -51,6 +52,11 @@ function parseSheet(ws) {
     if (/standard|lounder/i.test(m)) { S.loss1Label = m; S.loss1 = num(r[11]); }
     if (/burning|slag/i.test(m)) { S.loss2Label = m; S.loss2 = num(r[11]); }
   });
+  return buildData(date, raw, charge, S);
+}
+
+// Fills the calculated fields; shared by Excel and image extraction
+function buildData(date, raw, charge, S) {
   if (!S.totalCons) S.totalCons = charge.reduce((a, x) => a + x.consumed, 0);
 
   // Calculated fields
@@ -86,6 +92,8 @@ function Consumption() {
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isImgOver, setIsImgOver] = useState(false);
+  const [imgStatus, setImgStatus] = useState('');
   const [showSumMenu, setShowSumMenu] = useState(false);
   const [sumCols, setSumCols] = useState({
     totalProd: true, finishProd: true, stdLoss: true, loss2: true, avgYield: true, totalHeat: true, mnYield: true, totalCons: true
@@ -218,6 +226,40 @@ function Consumption() {
     reader.readAsArrayBuffer(file);
   };
 
+  const handleImage = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('Please select an image file (png, jpg, webp).'); return; }
+    try {
+      const { data: ex, issues, verifyError } = await extractAndVerify('consumption', file, setImgStatus);
+      const s = ex.summary || {};
+      const S = {
+        totalProd: num(s.totalProd), finishProd: num(s.finishProd), totalHeat: num(s.totalHeat), mnYield: num(s.mnYield), totalCons: num(s.totalCons),
+        loss1: num(s.loss1), loss2: num(s.loss2), loss1Label: s.loss1Label || '', loss2Label: s.loss2Label || ''
+      };
+      const raw = (ex.raw || []).map(r => ({
+        name: String(r.name || '').trim(), opening: num(r.opening), outside: 0, inhouse: 0, received: num(r.received), trans: num(r.trans), consumed: num(r.consumed),
+        kgHeatFile: has(r.kgHeat) ? num(r.kgHeat) : null
+      }));
+      const charge = (ex.charge || []).map(r => ({
+        name: String(r.name || '').trim(), opening: num(r.opening), outside: num(r.outside), inhouse: num(r.inhouse), consumed: num(r.consumed)
+      }));
+      if (!raw.length && !charge.length) { alert('Image me expected data nahi mila.'); return; }
+      const notes = issues.map(i => `Verifier correction — ${formatIssue(i)}`);
+      if (verifyError) notes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
+      setData({ ...buildData(ex.date || '', raw, charge, S), verifyNotes: notes, verified: !verifyError && !issues.length });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setImgStatus('');
+    }
+  };
+
+  const handleImageDrop = (e) => {
+    e.preventDefault();
+    setIsImgOver(false);
+    handleImage(e.dataTransfer.files[0]);
+  };
+
   const handleDragOver = (e) => {
     e.preventDefault();
     setIsDragOver(true);
@@ -310,6 +352,17 @@ function Consumption() {
         <div><b>Drop Excel file here</b> or click to select</div>
       </label>
 
+      <label
+        className={`drop ${isImgOver ? 'over' : ''}`}
+        style={{ marginTop: '12px' }}
+        onDragOver={e => { e.preventDefault(); setIsImgOver(true); }}
+        onDragLeave={() => setIsImgOver(false)}
+        onDrop={handleImageDrop}
+      >
+        <input type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={!!imgStatus} onChange={(e) => { handleImage(e.target.files[0]); e.target.value = ''; }} />
+        <div>{imgStatus ? <b>{imgStatus}</b> : <><b>Drop Image here</b> or click to select (AI extraction + verification)</>}</div>
+      </label>
+
       {data && (
         <div id="out">
           <div className="bar">
@@ -328,6 +381,13 @@ function Consumption() {
             </button>
           </div>
           
+          {data.verified && <div className="warn" style={{ background: '#ecfdf5', borderColor: '#a7f3d0' }}>✔ Image data verified — second pass me koi mismatch nahi mila.</div>}
+          {data.verifyNotes?.length > 0 && (
+            <div className="warn">
+              {data.verifyNotes.map((w, i) => <div key={i}>🔍 {w}</div>)}
+            </div>
+          )}
+
           {warns.length > 0 && (
             <div className="warn">
               {warns.map((w, i) => (
