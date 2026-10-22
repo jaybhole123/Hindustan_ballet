@@ -1,9 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { Printer, X } from 'lucide-react';
+import { Printer, X, Check } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import DateFilter from './DateFilter';
 import { normalizeDate, getTodayIso, getHistory, getFromHistory } from './dateHistory';
 import './App.css';
+
+// Custom SVG icon matching the exact square + pencil edit icon requested
+const EditSquareIcon = ({ size = 15, color = 'currentColor', className = '' }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+  >
+    {/* Rounded open square container */}
+    <path
+      d="M11 4H6C4.89543 4 4 4.89543 4 6V18C4 19.1046 4.89543 20 6 20H18C19.1046 20 20 19.1046 20 18V13"
+      stroke={color}
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    {/* Pencil editing out of square */}
+    <path
+      d="M18.5 2.5C19.3284 1.67157 20.6716 1.67157 21.5 2.5C22.3284 3.32843 22.3284 4.67157 21.5 5.5L12 15L8 16L9 12L18.5 2.5Z"
+      fill={color}
+      stroke={color}
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 const fmt = (n, d = 3) => {
   const num = parseFloat(n);
@@ -52,8 +82,15 @@ export default function MisReport() {
     if (saved) try { return JSON.parse(saved); } catch (e) {}
     return {};
   });
+  const [nameConfig, setNameConfig] = useState(() => {
+    const saved = localStorage.getItem('misNameConfig');
+    if (saved) try { return JSON.parse(saved); } catch (e) {}
+    return {};
+  });
+  const [editingNameKey, setEditingNameKey] = useState(null);
+  const [editingNameVal, setEditingNameVal] = useState('');
   const [draggedItem, setDraggedItem] = useState(null);
-  const [combineModal, setCombineModal] = useState({ isOpen: false, sizeIdx: null, label: '', count: 0 });
+  const [combineModal, setCombineModal] = useState({ isOpen: false, sizeIdx: null, label: '', suffixType: 'Tested', count: 0 });
 
   // Function to load data for a specific date
   const loadDataForDate = (isoDate) => {
@@ -107,6 +144,34 @@ export default function MisReport() {
     localStorage.setItem('misOrderConfig', JSON.stringify(orderConfig));
   }, [orderConfig]);
 
+  useEffect(() => {
+    localStorage.setItem('misNameConfig', JSON.stringify(nameConfig));
+  }, [nameConfig]);
+
+  const handleStartEditName = (key, currentVal) => {
+    setEditingNameKey(key);
+    setEditingNameVal(currentVal);
+  };
+
+  const handleSaveName = (key) => {
+    setNameConfig(prev => {
+      const next = { ...prev };
+      if (editingNameVal.trim()) {
+        next[key] = editingNameVal.trim();
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+    setEditingNameKey(null);
+    setEditingNameVal('');
+  };
+
+  const handleCancelEditName = () => {
+    setEditingNameKey(null);
+    setEditingNameVal('');
+  };
+
   const toggleRow = (sizeIdx, itemIdx) => {
     setSelectedRows(prev => {
       const key = sizeIdx;
@@ -128,30 +193,41 @@ export default function MisReport() {
       isOpen: true,
       sizeIdx,
       label: '',
+      suffixType: 'Tested',
       count: selected.length
     });
   };
 
   const handleConfirmCombine = (e) => {
     if (e) e.preventDefault();
-    const { sizeIdx, label } = combineModal;
+    const { sizeIdx, label, suffixType } = combineModal;
     if (!label.trim()) return;
 
     const selected = selectedRows[sizeIdx];
     if (!selected || selected.length < 2) {
-      setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 });
+      setCombineModal({ isOpen: false, sizeIdx: null, label: '', suffixType: 'Tested', count: 0 });
       return;
     }
 
+    let finalLabel = label.trim();
+    let defaultColor = '#ffffff';
+
+    if (suffixType && suffixType !== 'None') {
+      finalLabel = `${finalLabel} ( ${suffixType} )`;
+      if (suffixType === 'Normal') defaultColor = '#86efac';
+      else if (suffixType === 'Tested') defaultColor = '#fde047';
+      else if (suffixType === 'Random') defaultColor = '#bfdbfe';
+    }
+
     const indices = [...selected].sort((a, b) => a - b);
-    const newGroup = { label: label.trim(), indices, color: '#ffffff' };
+    const newGroup = { label: finalLabel, indices, color: defaultColor };
     setMergeConfig(prev => {
       const existing = prev[sizeIdx] || [];
       const filtered = existing.filter(g => !g.indices.some(i => indices.includes(i)));
       return { ...prev, [sizeIdx]: [...filtered, newGroup] };
     });
     setSelectedRows(prev => ({ ...prev, [sizeIdx]: [] }));
-    setCombineModal({ isOpen: false, sizeIdx: null, label: '', count: 0 });
+    setCombineModal({ isOpen: false, sizeIdx: null, label: '', suffixType: 'Tested', count: 0 });
   };
 
   const changeColor = (sizeIdx, index, isMerged, newColor) => {
@@ -282,18 +358,55 @@ export default function MisReport() {
   const loss1 = consData.summary.stdLoss || 0;
   const loss2 = consData.summary.loss2 || 0;
 
-  // Calculate Billet Totals from BilletData
+  // Calculate Billet Totals from BilletData based on assigned colors (Green, Yellow, Blue)
   let totNormal = 0, totTested = 0, totScrap = 0;
-  billetData.sizes.forEach(s => {
-    s.items.forEach(item => {
-      const n = item.name.toLowerCase();
-      if (n.includes('normal')) totNormal += num(item.production);
-      else if (n.includes('tested')) totTested += num(item.production);
-      else totScrap += num(item.production);
+  billetData.sizes.forEach((s, sIdx) => {
+    const groups = mergeConfig[sIdx] || [];
+    const mergedIndices = new Set(groups.flatMap(g => g.indices));
+
+    // Sum merged rows by group color
+    groups.forEach(g => {
+      const prodSum = (g.indices || []).reduce((acc, i) => acc + num(s.items[i]?.production), 0);
+      const c = (g.color || '').toLowerCase();
+      if (c === '#86efac') {
+        totNormal += prodSum;
+      } else if (c === '#fde047') {
+        totTested += prodSum;
+      } else if (c === '#bfdbfe') {
+        totScrap += prodSum;
+      } else {
+        // Fallback by name if uncolored
+        const n = (g.label || '').toLowerCase();
+        if (n.includes('normal')) totNormal += prodSum;
+        else if (n.includes('tested')) totTested += prodSum;
+        else totScrap += prodSum;
+      }
+    });
+
+    // Sum individual rows by item color
+    s.items.forEach((item, i) => {
+      if (!mergedIndices.has(i)) {
+        const prod = num(item.production);
+        const c = (colorConfig[sIdx]?.[i] || '').toLowerCase();
+        if (c === '#86efac') {
+          totNormal += prod;
+        } else if (c === '#fde047') {
+          totTested += prod;
+        } else if (c === '#bfdbfe') {
+          totScrap += prod;
+        } else {
+          // Fallback by name if uncolored
+          const n = (item.name || '').toLowerCase();
+          if (n.includes('normal')) totNormal += prod;
+          else if (n.includes('tested')) totTested += prod;
+          else totScrap += prod;
+        }
+      }
     });
   });
 
-  const reportsDiff = num(finishProd) - (totNormal + totTested + totScrap);
+  const totalFinishMaterialFromBillets = totNormal + totTested + totScrap;
+  const reportsDiff = num(finishProd) - totalFinishMaterialFromBillets;
 
   const thStyle = { border: '1px solid #000', padding: '4px', textAlign: 'center', fontWeight: 'bold', fontSize: '11px', background: '#f8fafc' };
   const tdStyle = { border: '1px solid #000', padding: '4px', textAlign: 'center', fontSize: '11px', color: '#000' };
@@ -362,9 +475,58 @@ export default function MisReport() {
             <tbody>
               {consData.raw.map((r, i) => {
                 const rec = (num(r.outside) + num(r.inhouse)) || num(r.received);
+                const rawKey = `raw-${i}`;
+                const displayName = nameConfig[rawKey] || r.name;
+                const isEditingThis = editingNameKey === rawKey;
+
                 return (
                   <tr key={i}>
-                    <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 'bold' }}>{r.name}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 'bold' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        {isEditingThis ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingNameVal}
+                              onChange={e => setEditingNameVal(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleSaveName(rawKey);
+                                if (e.key === 'Escape') handleCancelEditName();
+                              }}
+                              style={{ flex: 1, padding: '2px 6px', fontSize: '11px', border: '1px solid #3b82f6', borderRadius: '4px' }}
+                            />
+                            <button
+                              onClick={() => handleSaveName(rawKey)}
+                              style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              title="Save"
+                            >
+                              <Check size={12} />
+                            </button>
+                            <button
+                              onClick={handleCancelEditName}
+                              style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              title="Cancel"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span>{displayName}</span>
+                            {editMode && (
+                              <button
+                                onClick={() => handleStartEditName(rawKey, displayName)}
+                                style={{ background: 'none', border: 'none', color: '#1e293b', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                title="Edit row name"
+                              >
+                                <EditSquareIcon size={14} color="#0f172a" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ ...tdStyle }}>{fmt(r.opening)}</td>
                     <td style={{ ...tdStyle }}>{fmt(r.outside)}</td>
                     <td style={{ ...tdStyle }}>{fmt(r.inhouse)}</td>
@@ -413,16 +575,65 @@ export default function MisReport() {
             <tbody>
               {consData.charge.map((r, i) => {
                 const rec = num(r.outside) + num(r.inhouse);
+                const chargeKey = `charge-${i}`;
+                const displayName = nameConfig[chargeKey] || r.name;
+                const isEditingThis = editingNameKey === chargeKey;
+
                 return (
                   <tr key={i}>
-                    <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 'bold', color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{r.name}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.opening)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.outside)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.inhouse)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(rec)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.consumed)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.closing)}</td>
-                    <td style={{ ...tdStyle, color: r.name.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.metalPct, 2)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'left', fontWeight: 'bold', color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        {isEditingThis ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingNameVal}
+                              onChange={e => setEditingNameVal(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleSaveName(chargeKey);
+                                if (e.key === 'Escape') handleCancelEditName();
+                              }}
+                              style={{ flex: 1, padding: '2px 6px', fontSize: '11px', border: '1px solid #3b82f6', borderRadius: '4px' }}
+                            />
+                            <button
+                              onClick={() => handleSaveName(chargeKey)}
+                              style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              title="Save"
+                            >
+                              <Check size={12} />
+                            </button>
+                            <button
+                              onClick={handleCancelEditName}
+                              style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              title="Cancel"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span>{displayName}</span>
+                            {editMode && (
+                              <button
+                                onClick={() => handleStartEditName(chargeKey, displayName)}
+                                style={{ background: 'none', border: 'none', color: '#1e293b', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                title="Edit row name"
+                              >
+                                <EditSquareIcon size={14} color="#0f172a" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.opening)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.outside)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.inhouse)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(rec)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.consumed)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.closing)}</td>
+                    <td style={{ ...tdStyle, color: displayName.toLowerCase().includes('tested') ? '#dc2626' : '#000' }}>{fmt(r.metalPct, 2)}</td>
                   </tr>
                 );
               })}
@@ -467,10 +678,13 @@ export default function MisReport() {
                 groups.forEach((group, gi) => {
                   const firstIdx = Math.min(...group.indices);
                   const items = group.indices.map(i => s.items[i]).filter(Boolean);
+                  const nameKey = `group-${idx}-${gi}`;
+                  const effectiveLabel = nameConfig[nameKey] || group.label;
                   renderList.push({
                     id: `group-${gi}`,
+                    nameKey,
                     type: 'merged', position: firstIdx, groupIdx: gi,
-                    label: group.label, color: group.color || '#ffffff',
+                    label: effectiveLabel, color: group.color || '#ffffff',
                     opening: items.reduce((a, x) => a + num(x.opening), 0),
                     production: items.reduce((a, x) => a + num(x.production), 0),
                     transfer: items.reduce((a, x) => a + num(x.transfer), 0),
@@ -483,12 +697,15 @@ export default function MisReport() {
 
                 s.items.forEach((item, i) => {
                   if (!mergedIndices.has(i)) {
-                    const n = item.name.toLowerCase();
                     let bg = colorConfig[idx]?.[i] || '#ffffff';
+                    const nameKey = `billet-${idx}-${i}`;
+                    const defaultLabel = i === 0 ? `BILLETS ${s.size} (${item.name})` : item.name;
+                    const effectiveLabel = nameConfig[nameKey] || defaultLabel;
                     renderList.push({
                       id: `item-${i}`,
+                      nameKey,
                       type: 'individual', position: i, itemIdx: i,
-                      label: `BILLETS ${s.size} (${item.name})`, color: bg,
+                      label: effectiveLabel, color: bg,
                       opening: num(item.opening), production: num(item.production),
                       transfer: num(item.transfer), returnBillet: num(item.returnBillet), despatch: num(item.despatch),
                       closing: num(item.closing), remarks: item.remarks || ''
@@ -522,42 +739,88 @@ export default function MisReport() {
                       <th style={{ ...thStyle, borderTop: '2px solid #000' }}>CLOSING</th>
                       <th style={{ ...thStyle, borderTop: '2px solid #000', width: '18%' }}>REMARK</th>
                     </tr>
-                    {renderList.map((row, ri) => (
-                      <tr 
-                        key={row.id} 
-                        draggable={editMode} 
-                        onDragStart={(e) => handleDragStart(e, idx, ri)} 
-                        onDragOver={handleDragOver} 
-                        onDrop={(e) => handleDrop(e, idx, ri, renderList)} 
-                        style={editMode ? { cursor: 'grab' } : {}}
-                      >
-                        <td style={{ ...tdStyle, background: row.color, fontWeight: 'bold', textAlign: 'left' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span>{row.label}</span>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              {editMode && (
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                  {['#86efac', '#fde047', '#bfdbfe', '#ffffff'].map(c => (
-                                    <button
-                                      key={c}
-                                      onClick={() => changeColor(idx, row.type === 'merged' ? row.groupIdx : row.itemIdx, row.type === 'merged', c)}
-                                      style={{
-                                        width: '16px', height: '16px', borderRadius: '50%',
-                                        border: c === '#ffffff' ? '1px solid #ccc' : '1px solid rgba(0,0,0,0.2)',
-                                        cursor: 'pointer', background: c, padding: 0,
-                                        boxShadow: row.color === c ? '0 0 0 2px #333' : 'none'
-                                      }}
-                                      title={c === '#ffffff' ? 'Reset to White' : 'Set Color'}
-                                    />
-                                  ))}
+                    {renderList.map((row, ri) => {
+                      const isEditingThis = editingNameKey === row.nameKey;
+
+                      return (
+                        <tr 
+                          key={row.id} 
+                          draggable={editMode} 
+                          onDragStart={(e) => handleDragStart(e, idx, ri)} 
+                          onDragOver={handleDragOver} 
+                          onDrop={(e) => handleDrop(e, idx, ri, renderList)} 
+                          style={editMode ? { cursor: 'grab' } : {}}
+                        >
+                          <td style={{ ...tdStyle, background: row.color, fontWeight: 'bold', textAlign: 'left' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                              {isEditingThis ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                                  <input
+                                    autoFocus
+                                    type="text"
+                                    value={editingNameVal}
+                                    onChange={e => setEditingNameVal(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleSaveName(row.nameKey);
+                                      if (e.key === 'Escape') handleCancelEditName();
+                                    }}
+                                    style={{ flex: 1, padding: '2px 6px', fontSize: '11px', border: '1px solid #3b82f6', borderRadius: '4px' }}
+                                  />
+                                  <button
+                                    onClick={() => handleSaveName(row.nameKey)}
+                                    style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                    title="Save"
+                                  >
+                                    <Check size={12} />
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEditName}
+                                    style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '3px', padding: '2px 5px', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                    title="Cancel"
+                                  >
+                                    <X size={12} />
+                                  </button>
                                 </div>
-                              )}
-                              {editMode && row.type === 'merged' && (
-                                <button onClick={() => removeMergeGroup(idx, row.groupIdx)} style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 8px', fontSize: '11px', cursor: 'pointer' }}>Unmerge</button>
+                              ) : (
+                                <>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span>{row.label}</span>
+                                    {editMode && (
+                                      <button
+                                        onClick={() => handleStartEditName(row.nameKey, row.label)}
+                                        style={{ background: 'none', border: 'none', color: '#1e293b', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                                        title="Edit row name"
+                                      >
+                                        <EditSquareIcon size={14} color="#0f172a" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    {editMode && (
+                                      <div style={{ display: 'flex', gap: '4px' }}>
+                                        {['#86efac', '#fde047', '#bfdbfe', '#ffffff'].map(c => (
+                                          <button
+                                            key={c}
+                                            onClick={() => changeColor(idx, row.type === 'merged' ? row.groupIdx : row.itemIdx, row.type === 'merged', c)}
+                                            style={{
+                                              width: '16px', height: '16px', borderRadius: '50%',
+                                              border: c === '#ffffff' ? '1px solid #ccc' : '1px solid rgba(0,0,0,0.2)',
+                                              cursor: 'pointer', background: c, padding: 0,
+                                              boxShadow: row.color === c ? '0 0 0 2px #333' : 'none'
+                                            }}
+                                            title={c === '#ffffff' ? 'Reset to White' : 'Set Color'}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                    {editMode && row.type === 'merged' && (
+                                      <button onClick={() => removeMergeGroup(idx, row.groupIdx)} style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: '4px', padding: '2px 8px', fontSize: '11px', cursor: 'pointer' }}>Unmerge</button>
+                                    )}
+                                  </div>
+                                </>
                               )}
                             </div>
-                          </div>
-                        </td>
+                          </td>
                         {editMode && (
                           <td style={{ ...tdStyle }}>
                             {row.type === 'individual' && (
@@ -573,7 +836,8 @@ export default function MisReport() {
                         <td style={{ ...tdStyle }}>{fmt(row.closing)}</td>
                         <td style={{ ...tdStyle, textAlign: 'left' }}>{row.remarks}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {/* Combine button */}
                     {editMode && selected.length >= 2 && (
                       <tr>
@@ -605,7 +869,7 @@ export default function MisReport() {
               </tr>
               <tr>
                 <td style={{ ...tdStyle, fontWeight: 'bold', textAlign: 'right', paddingRight: '30px' }}>TOTAL FINISH MATERIAL</td>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(finishProd)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(totalFinishMaterialFromBillets)}</td>
                 <td style={{ ...tdStyle }}></td>
               </tr>
             </tbody>
@@ -626,25 +890,41 @@ export default function MisReport() {
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(totalProdLiquid)}</td>
               </tr>
               <tr>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>TOTAL NORMAL BILLET</td>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(totNormal)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#86efac' }}>TOTAL NORMAL BILLET</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#86efac' }}>{fmt(totNormal)}</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>STANDARD LOSS + LAUNDER LOSS</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(loss1)}</td>
               </tr>
               <tr>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>TOTAL TESTED BILLET</td>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(totTested)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#fde047' }}>TOTAL TESTED BILLET</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#fde047' }}>{fmt(totTested)}</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>TOTAL FINISH MATERIAL (SOLID)</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(finishProd)}</td>
               </tr>
               <tr>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>TOTAL 4.3 meter, 5/4 meter, 2/3 Meter, Scraps/End Cut</td>
-                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(totScrap)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#bfdbfe' }}>TOTAL 4.3 meter, 5/4 meter, 2/3 Meter, Scraps/End Cut</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold', background: '#bfdbfe' }}>{fmt(totScrap)}</td>
                 <td colSpan="2" rowSpan="2" style={{ border: 'none' }}></td>
               </tr>
               <tr>
-                <td colSpan="2" style={{ ...tdStyle, background: '#bfdbfe', fontWeight: 'bold' }}>
-                  REPORTS & SMS REPORT DIFFERENCE QTY &nbsp;&nbsp;&nbsp;&nbsp; {fmt(reportsDiff)}
+                <td 
+                  style={{ 
+                    ...tdStyle, 
+                    fontWeight: 'bold',
+                    background: '#ffffff'
+                  }}
+                >
+                  REPORTS & SMS REPORT DIFFERENCE QTY
+                </td>
+                <td 
+                  style={{ 
+                    ...tdStyle, 
+                    fontWeight: 'bold',
+                    background: Math.abs(reportsDiff) > 0.0001 ? '#fee2e2' : '#ffffff', 
+                    color: Math.abs(reportsDiff) > 0.0001 ? '#dc2626' : '#000000'
+                  }}
+                >
+                  {fmt(reportsDiff)}
                 </td>
               </tr>
             </tbody>
@@ -670,7 +950,7 @@ export default function MisReport() {
             <form onSubmit={handleConfirmCombine}>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#475569', marginBottom: '8px' }}>
-                  Enter Label for Combined Row:
+                  Enter Heading / Name for Combined Row:
                 </label>
                 <input 
                   autoFocus 
@@ -678,7 +958,7 @@ export default function MisReport() {
                   type="text" 
                   value={combineModal.label} 
                   onChange={e => setCombineModal(prev => ({ ...prev, label: e.target.value }))}
-                  placeholder="e.g. Combined Tested Billets"
+                  placeholder="e.g. BILLETS, Tested Billets, etc."
                   style={{
                     width: '100%',
                     padding: '10px 14px',
@@ -686,9 +966,50 @@ export default function MisReport() {
                     border: '1px solid #cbd5e1',
                     fontSize: '14px',
                     outline: 'none',
-                    boxSizing: 'border-box'
+                    boxSizing: 'border-box',
+                    marginBottom: '16px'
                   }}
                 />
+
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#475569', marginBottom: '8px' }}>
+                  Select Type Tag:
+                </label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {[
+                    { label: '( Normal )', value: 'Normal', bg: '#86efac', border: '#16a34a' },
+                    { label: '( Tested )', value: 'Tested', bg: '#fde047', border: '#ca8a04' },
+                    { label: '( Random )', value: 'Random', bg: '#bfdbfe', border: '#2563eb' },
+                    { label: 'None', value: 'None', bg: '#f1f5f9', border: '#94a3b8' }
+                  ].map(opt => {
+                    const isSelected = combineModal.suffixType === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setCombineModal(prev => ({ ...prev, suffixType: opt.value }))}
+                        style={{
+                          flex: '1 1 45%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                          fontSize: '13px',
+                          border: isSelected ? `2px solid ${opt.border}` : '1px solid #e2e8f0',
+                          background: opt.bg,
+                          color: '#0f172a',
+                          boxShadow: isSelected ? '0 0 0 2px rgba(0,0,0,0.1)' : 'none'
+                        }}
+                      >
+                        {isSelected && <span>✓</span>}
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
