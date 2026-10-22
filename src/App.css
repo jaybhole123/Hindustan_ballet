@@ -686,3 +686,35 @@ tfoot td {
     letter-spacing: 0.5px;
   }
 }
+
+/* MIS PDF Single Page Fit Styling */
+#mis-report-content.mis-pdf-single-page {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 790px !important;
+  margin: 0 auto !important;
+}
+
+#mis-report-content.mis-pdf-single-page table {
+  width: 100% !important;
+}
+
+#mis-report-content.mis-pdf-single-page td,
+#mis-report-content.mis-pdf-single-page th {
+  padding: 2.2px 3px !important;
+  font-size: 8.5px !important;
+  line-height: 1.15 !important;
+}
+
+#mis-report-content.mis-pdf-single-page td div {
+  gap: 3px !important;
+}
+
+#mis-report-content.mis-pdf-single-page input[type="text"] {
+  display: none !important;
+}
+
+#mis-report-content.mis-pdf-single-page button {
+  display: none !important;
+}
+

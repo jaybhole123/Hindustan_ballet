@@ -289,14 +289,37 @@ export default function MisReport() {
 
   const downloadPDF = () => {
     const element = document.getElementById('mis-report-content');
+    if (!element) return;
+
+    // Apply print-fit class temporarily
+    element.classList.add('mis-pdf-single-page');
+
     const opt = {
-      margin: 0.2,
+      margin: [0.15, 0.15, 0.15, 0.15],
       filename: `MIS_Report_${consData?.date || 'export'}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+      html2canvas: { 
+        scale: 2, 
+        useCORS: true, 
+        scrollY: 0,
+        scrollX: 0
+      },
+      jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['avoid-all'] }
     };
-    html2pdf().set(opt).from(element).save();
+
+    html2pdf().set(opt).from(element).toPdf().get('pdf').then((pdf) => {
+      const totalPages = pdf.internal.getNumberOfPages();
+      if (totalPages > 1) {
+        for (let i = totalPages; i > 1; i--) {
+          pdf.deletePage(i);
+        }
+      }
+    }).save().then(() => {
+      element.classList.remove('mis-pdf-single-page');
+    }).catch(() => {
+      element.classList.remove('mis-pdf-single-page');
+    });
   };
 
   const consDates = Object.keys(getHistory('consumptionHistory'));
