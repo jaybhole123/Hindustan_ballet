@@ -718,3 +718,16 @@ tfoot td {
   display: none !important;
 }
 
+/* On PDF download only: make the bottom total summary section white, but keep SMS PRODUCTION and DIFFERENCE QTY in light blue */
+#mis-report-content.mis-pdf-single-page .mis-footer-split-table td {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+#mis-report-content.mis-pdf-single-page .mis-footer-split-table td.mis-light-blue {
+  background: #bfdbfe !important;
+  background-color: #bfdbfe !important;
+}
+
+
+

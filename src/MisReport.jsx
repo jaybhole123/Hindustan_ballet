@@ -1048,12 +1048,12 @@ export default function MisReport() {
           </table>
 
           {/* Bottom Split Footer */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: '2px solid #000' }}>
+          <table className="mis-footer-split-table" style={{ width: '100%', borderCollapse: 'collapse', borderTop: '2px solid #000' }}>
             <tbody>
               <tr style={{ background: '#e2e8f0', fontWeight: 'bold' }}>
                 <td style={{ ...tdStyle }}>TOTAL</td>
                 <td style={{ ...tdStyle }}>QTY</td>
-                <td colSpan="2" style={{ ...tdStyle }}>SMS PRODUCTION</td>
+                <td colSpan="2" className="mis-light-blue" style={{ ...tdStyle, background: '#bfdbfe' }}>SMS PRODUCTION</td>
               </tr>
               <tr>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>PRODUCTION (LIQUID)</td>
@@ -1081,6 +1081,7 @@ export default function MisReport() {
               <tr>
                 <td 
                   colSpan="2"
+                  className="mis-light-blue"
                   style={{ 
                     ...tdStyle, 
                     fontWeight: 'bold',
