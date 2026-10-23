@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check } from 'lucide-react';
+import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
 import DateFilter from './DateFilter';
@@ -130,6 +130,31 @@ function Consumption() {
     localStorage.setItem('consumptionData', JSON.stringify(data));
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
+  };
+
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const handleConfirmReset = () => {
+    const dateKey = (data && normalizeDate(data.date)) || selectedDate;
+    const hist = getHistory('consumptionHistory');
+    if (hist[dateKey]) {
+      delete hist[dateKey];
+      localStorage.setItem('consumptionHistory', JSON.stringify(hist));
+    }
+    const saved = localStorage.getItem('consumptionData');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (normalizeDate(parsed.date) === dateKey) {
+          localStorage.removeItem('consumptionData');
+        }
+      } catch (e) {}
+    }
+    setData(null);
+    setWorkbook(null);
+    setSheetNames([]);
+    setSelectedSheet('');
+    setShowResetModal(false);
   };
   const [workbook, setWorkbook] = useState(null);
   const [sheetNames, setSheetNames] = useState([]);
@@ -456,6 +481,30 @@ function Consumption() {
               {isSaved ? <Check size={16} /> : <Save size={16} />} 
               {isSaved ? 'Saved Locally!' : 'Save Report'}
             </button>
+            <button
+              onClick={() => setShowResetModal(true)}
+              title="Reset / Clear Report"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#ffffff',
+                color: '#dc2626',
+                border: '1px solid #fecaca',
+                fontWeight: '600',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#fef2f2';
+                e.currentTarget.style.borderColor = '#f87171';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#ffffff';
+                e.currentTarget.style.borderColor = '#fecaca';
+              }}
+            >
+              <RotateCcw size={16} /> Reset
+            </button>
           </div>
           
           {data.verified && <div className="warn" style={{ background: '#ecfdf5', borderColor: '#a7f3d0' }}>✔ Image data verified — second pass me koi mismatch nahi mila.</div>}
@@ -744,6 +793,79 @@ function Consumption() {
                   {sumCols.totalCons && <tr><td>Total Consumption</td>{renderCell(data.summary.totalCons)}</tr>}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetModal && (
+        <div className="modal-overlay" onClick={() => setShowResetModal(false)}>
+          <div 
+            className="modal-content" 
+            style={{ maxWidth: '440px', padding: '24px', borderRadius: '16px' }} 
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', marginBottom: '16px' }}>
+              <div style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '50%',
+                background: '#fee2e2',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <AlertTriangle size={22} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: '18px', fontWeight: '600', color: '#1e293b' }}>
+                  Reset Consumption Report?
+                </h3>
+                <p style={{ margin: 0, fontSize: '14px', color: '#64748b', lineHeight: '1.5' }}>
+                  Kya aap is date (<b>{data?.date || selectedDate}</b>) ki consumption report ko reset/clear karna chahte hain? Isse local saved data clear ho jayega.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '24px' }}>
+              <button 
+                type="button" 
+                onClick={() => setShowResetModal(false)}
+                style={{
+                  padding: '9px 18px',
+                  background: '#f1f5f9',
+                  color: '#475569',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                onClick={handleConfirmReset}
+                style={{
+                  padding: '9px 20px',
+                  background: '#dc2626',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)'
+                }}
+              >
+                <RotateCcw size={15} /> Yes, Reset
+              </button>
             </div>
           </div>
         </div>

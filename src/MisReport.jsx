@@ -90,6 +90,21 @@ export default function MisReport() {
   const [editingNameKey, setEditingNameKey] = useState(null);
   const [editingNameVal, setEditingNameVal] = useState('');
   const [draggedItem, setDraggedItem] = useState(null);
+  const [headingPresets, setHeadingPresets] = useState(() => {
+    const saved = localStorage.getItem('misHeadingPresets');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [
+      'BILLETS 110 * 110 MM',
+      'BILLETS 125 * 125 MM',
+      'BILLETS 160 * 160 MM',
+      '5/4 meter, 2/3 Meter, Scraps/End Cut',
+      '4.3 meter, 5/4 meter, 2/3 Meter, Scraps/End Cut'
+    ];
+  });
+  const [isAddingNewPreset, setIsAddingNewPreset] = useState(false);
+  const [newPresetVal, setNewPresetVal] = useState('');
   const [combineModal, setCombineModal] = useState({ isOpen: false, sizeIdx: null, label: '', suffixType: 'Tested', count: 0 });
 
   // Function to load data for a specific date
@@ -148,6 +163,22 @@ export default function MisReport() {
     localStorage.setItem('misNameConfig', JSON.stringify(nameConfig));
   }, [nameConfig]);
 
+  useEffect(() => {
+    localStorage.setItem('misHeadingPresets', JSON.stringify(headingPresets));
+  }, [headingPresets]);
+
+  const handleAddNewPreset = (e) => {
+    if (e) e.preventDefault();
+    const val = newPresetVal.trim();
+    if (!val) return;
+    if (!headingPresets.includes(val)) {
+      setHeadingPresets(prev => [...prev, val]);
+    }
+    setCombineModal(prev => ({ ...prev, label: val }));
+    setNewPresetVal('');
+    setIsAddingNewPreset(false);
+  };
+
   const handleStartEditName = (key, currentVal) => {
     setEditingNameKey(key);
     setEditingNameVal(currentVal);
@@ -192,10 +223,12 @@ export default function MisReport() {
     setCombineModal({
       isOpen: true,
       sizeIdx,
-      label: '',
+      label: headingPresets[0] || 'BILLETS 110 * 110 MM',
       suffixType: 'Tested',
       count: selected.length
     });
+    setIsAddingNewPreset(false);
+    setNewPresetVal('');
   };
 
   const handleConfirmCombine = (e) => {
@@ -228,6 +261,72 @@ export default function MisReport() {
     });
     setSelectedRows(prev => ({ ...prev, [sizeIdx]: [] }));
     setCombineModal({ isOpen: false, sizeIdx: null, label: '', suffixType: 'Tested', count: 0 });
+  };
+
+  // 1-Click Auto Merge by Color for all sizes
+  const autoMergeByColor = () => {
+    if (!billetData || !billetData.sizes) return;
+    const newMergeConfig = {};
+
+    billetData.sizes.forEach((s, sIdx) => {
+      const greenIndices = [];
+      const yellowIndices = [];
+      const blueIndices = [];
+
+      s.items.forEach((item, itemIdx) => {
+        const c = (colorConfig[sIdx]?.[itemIdx] || '').toLowerCase();
+        if (c === '#86efac') {
+          greenIndices.push(itemIdx);
+        } else if (c === '#fde047') {
+          yellowIndices.push(itemIdx);
+        } else if (c === '#bfdbfe') {
+          blueIndices.push(itemIdx);
+        } else {
+          // Fallback based on item name if color not yet explicitly set
+          const n = (item.name || '').toLowerCase();
+          if (n.includes('normal')) greenIndices.push(itemIdx);
+          else if (n.includes('tested')) yellowIndices.push(itemIdx);
+          else blueIndices.push(itemIdx);
+        }
+      });
+
+      const groups = [];
+      if (greenIndices.length >= 2) {
+        groups.push({
+          label: `BILLETS ${s.size} ( Normal )`,
+          indices: greenIndices.sort((a, b) => a - b),
+          color: '#86efac'
+        });
+      }
+      if (yellowIndices.length >= 2) {
+        groups.push({
+          label: `BILLETS ${s.size} ( Tested )`,
+          indices: yellowIndices.sort((a, b) => a - b),
+          color: '#fde047'
+        });
+      }
+      if (blueIndices.length >= 2) {
+        groups.push({
+          label: `${s.size.includes('160') ? '4.3 meter, 5/4 meter, 2/3 Meter, Scraps/End Cut' : '5/4 meter, 2/3 Meter, Scraps/End Cut'} ( Random )`,
+          indices: blueIndices.sort((a, b) => a - b),
+          color: '#bfdbfe'
+        });
+      }
+
+      if (groups.length > 0) {
+        newMergeConfig[sIdx] = groups;
+      }
+    });
+
+    setMergeConfig(newMergeConfig);
+    setSelectedRows({});
+  };
+
+  const resetAllMerges = () => {
+    if (window.confirm('Are you sure you want to unmerge all rows back to individual rows?')) {
+      setMergeConfig({});
+      setSelectedRows({});
+    }
   };
 
   const changeColor = (sizeIdx, index, isMerged, newColor) => {
@@ -361,8 +460,10 @@ export default function MisReport() {
     acc.trans += num(row.trans);
     acc.consumed += num(row.consumed);
     acc.closing += num(row.closing);
+    acc.kgTon += num(row.kgTon);
+    acc.kgHeat += num(row.kgHeat);
     return acc;
-  }, { opening: 0, outside: 0, inhouse: 0, received: 0, trans: 0, consumed: 0, closing: 0 });
+  }, { opening: 0, outside: 0, inhouse: 0, received: 0, trans: 0, consumed: 0, closing: 0, kgTon: 0, kgHeat: 0 });
 
   const chargeTot = consData.charge.reduce((acc, row) => {
     acc.opening += num(row.opening);
@@ -451,6 +552,48 @@ export default function MisReport() {
           <button onClick={() => setEditMode(!editMode)} style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px', background: editMode ? '#ef4444' : '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}>
             {editMode ? '✕ Exit Edit Mode' : '✎ Edit Mode'}
           </button>
+          {editMode && (
+            <>
+              <button 
+                onClick={autoMergeByColor} 
+                style={{ 
+                  whiteSpace: 'nowrap', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px', 
+                  background: '#6366f1', 
+                  color: 'white', 
+                  border: 'none', 
+                  padding: '8px 16px', 
+                  borderRadius: '6px', 
+                  cursor: 'pointer', 
+                  fontWeight: '600' 
+                }}
+                title="Automatically combine rows by their colors (Green, Yellow, Blue)"
+              >
+                ⚡ Auto Merge by Color
+              </button>
+              <button 
+                onClick={resetAllMerges} 
+                style={{ 
+                  whiteSpace: 'nowrap', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px', 
+                  background: '#f8fafc', 
+                  color: '#dc2626', 
+                  border: '1px solid #fca5a5', 
+                  padding: '8px 14px', 
+                  borderRadius: '6px', 
+                  cursor: 'pointer', 
+                  fontWeight: '500' 
+                }}
+                title="Reset all merged rows back to individual rows"
+              >
+                Unmerge All
+              </button>
+            </>
+          )}
           <button onClick={downloadPDF} style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--acc)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}>
             <Printer size={16} /> Download PDF
           </button>
@@ -478,16 +621,18 @@ export default function MisReport() {
           <table style={{ width: '100%', borderCollapse: 'collapse', borderTop: 'none', borderBottom: 'none' }}>
             <thead>
               <tr>
-                <td colSpan="9" style={{ ...sectionHeaderStyle, borderTop: 'none' }}>RAW MATERIAL CONSUMPTION</td>
+                <td colSpan="11" style={{ ...sectionHeaderStyle, borderTop: 'none' }}>RAW MATERIAL CONSUMPTION</td>
               </tr>
               <tr>
-                <th rowSpan="2" style={{ ...thStyle, width: '22%' }}>MATERIAL</th>
+                <th rowSpan="2" style={{ ...thStyle, width: '20%' }}>MATERIAL</th>
                 <th rowSpan="2" style={{ ...thStyle }}>OPENING</th>
                 <th colSpan="3" style={{ ...thStyle }}>RECEIVED</th>
                 <th rowSpan="2" style={{ ...thStyle }}>ISSUE</th>
                 <th rowSpan="2" style={{ ...thStyle }}>TRANS.</th>
                 <th rowSpan="2" style={{ ...thStyle }}>CONSUMPTION</th>
                 <th rowSpan="2" style={{ ...thStyle }}>CLOSING</th>
+                <th rowSpan="2" style={{ ...thStyle }}>KG/TON</th>
+                <th rowSpan="2" style={{ ...thStyle }}>KG/HEAT</th>
               </tr>
               <tr>
                 <th style={{ ...thStyle }}>OUT SIDE</th>
@@ -558,6 +703,8 @@ export default function MisReport() {
                     <td style={{ ...tdStyle }}>{fmt(r.trans)}</td>
                     <td style={{ ...tdStyle }}>{fmt(r.consumed)}</td>
                     <td style={{ ...tdStyle }}>{fmt(r.closing)}</td>
+                    <td style={{ ...tdStyle }}>{fmt(r.kgTon)}</td>
+                    <td style={{ ...tdStyle }}>{fmt(r.kgHeat)}</td>
                   </tr>
                 );
               })}
@@ -571,6 +718,8 @@ export default function MisReport() {
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(rawTot.trans)}</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(rawTot.consumed)}</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(rawTot.closing)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(rawTot.kgTon)}</td>
+                <td style={{ ...tdStyle, fontWeight: 'bold' }}>{fmt(rawTot.kgHeat)}</td>
               </tr>
             </tbody>
           </table>
@@ -927,24 +1076,29 @@ export default function MisReport() {
               <tr>
                 <td style={{ ...tdStyle, fontWeight: 'bold', background: '#bfdbfe' }}>TOTAL 4.3 meter, 5/4 meter, 2/3 Meter, Scraps/End Cut</td>
                 <td style={{ ...tdStyle, fontWeight: 'bold', background: '#bfdbfe' }}>{fmt(totScrap)}</td>
-                <td colSpan="2" rowSpan="2" style={{ border: 'none' }}></td>
+                <td colSpan="2" style={{ border: 'none' }}></td>
               </tr>
               <tr>
                 <td 
+                  colSpan="2"
                   style={{ 
                     ...tdStyle, 
                     fontWeight: 'bold',
-                    background: '#ffffff'
+                    background: '#bfdbfe',
+                    color: '#000000',
+                    textAlign: 'center'
                   }}
                 >
                   REPORTS & SMS REPORT DIFFERENCE QTY
                 </td>
                 <td 
+                  colSpan="2"
                   style={{ 
                     ...tdStyle, 
                     fontWeight: 'bold',
                     background: Math.abs(reportsDiff) > 0.0001 ? '#fee2e2' : '#ffffff', 
-                    color: Math.abs(reportsDiff) > 0.0001 ? '#dc2626' : '#000000'
+                    color: Math.abs(reportsDiff) > 0.0001 ? '#dc2626' : '#000000',
+                    textAlign: 'center'
                   }}
                 >
                   {fmt(reportsDiff)}
@@ -972,27 +1126,122 @@ export default function MisReport() {
             
             <form onSubmit={handleConfirmCombine}>
               <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#475569', marginBottom: '8px' }}>
-                  Enter Heading / Name for Combined Row:
-                </label>
-                <input 
-                  autoFocus 
-                  required 
-                  type="text" 
-                  value={combineModal.label} 
-                  onChange={e => setCombineModal(prev => ({ ...prev, label: e.target.value }))}
-                  placeholder="e.g. BILLETS, Tested Billets, etc."
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '14px',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    marginBottom: '16px'
-                  }}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: '500', color: '#475569' }}>
+                    Select Heading / Name for Combined Row:
+                  </label>
+                  {!isAddingNewPreset ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewPreset(true)}
+                      style={{
+                        background: '#eff6ff',
+                        color: '#2563eb',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '4px',
+                        padding: '2px 8px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      + Add New
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewPreset(false)}
+                      style={{
+                        background: '#f8fafc',
+                        color: '#64748b',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '4px',
+                        padding: '2px 8px',
+                        fontSize: '12px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                {isAddingNewPreset ? (
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newPresetVal}
+                      onChange={e => setNewPresetVal(e.target.value)}
+                      placeholder="e.g. BILLETS 200 * 200 MM"
+                      style={{
+                        flex: 1,
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #3b82f6',
+                        fontSize: '14px',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddNewPreset();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddNewPreset}
+                      disabled={!newPresetVal.trim()}
+                      style={{
+                        padding: '10px 16px',
+                        background: '#2563eb',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontWeight: '600',
+                        cursor: newPresetVal.trim() ? 'pointer' : 'not-allowed',
+                        opacity: newPresetVal.trim() ? 1 : 0.6
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={combineModal.label}
+                    onChange={e => {
+                      if (e.target.value === '__add_new__') {
+                        setIsAddingNewPreset(true);
+                      } else {
+                        setCombineModal(prev => ({ ...prev, label: e.target.value }));
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '14px',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                      marginBottom: '16px',
+                      background: 'white',
+                      fontWeight: '500',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {headingPresets.map(preset => (
+                      <option key={preset} value={preset}>
+                        {preset}
+                      </option>
+                    ))}
+                    <option value="__add_new__" style={{ color: '#2563eb', fontWeight: 'bold' }}>
+                      + Add New Heading...
+                    </option>
+                  </select>
+                )}
 
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: '#475569', marginBottom: '8px' }}>
                   Select Type Tag:
