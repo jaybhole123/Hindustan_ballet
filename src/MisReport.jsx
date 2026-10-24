@@ -112,8 +112,18 @@ export default function MisReport() {
     const consHist = getHistory('consumptionHistory');
     const billetHist = getHistory('billetHistory');
 
+    // Look in history by exact key, or by normalized key match
     let cData = consHist[isoDate] || null;
     let bData = billetHist[isoDate] || null;
+
+    if (!cData) {
+      const matchKey = Object.keys(consHist).find(k => normalizeDate(k) === isoDate);
+      if (matchKey) cData = consHist[matchKey];
+    }
+    if (!bData) {
+      const matchKey = Object.keys(billetHist).find(k => normalizeDate(k) === isoDate);
+      if (matchKey) bData = billetHist[matchKey];
+    }
 
     // Fallback to active single report if date matches
     if (!cData) {

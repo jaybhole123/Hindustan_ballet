@@ -2,19 +2,40 @@ import React, { useRef } from 'react';
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { formatDisplayDate, getTodayIso, offsetDate } from './dateHistory';
 
-export default function DateFilter({ selectedDate, onDateChange, availableDates = [] }) {
+export default function DateFilter({ selectedDate, onDateChange, availableDates = [], isOverall = false, onToggleOverall = null }) {
   const dateInputRef = useRef(null);
 
   const handlePrev = () => {
+    if (isOverall && onToggleOverall) onToggleOverall(false);
     onDateChange(offsetDate(selectedDate || getTodayIso(), -1));
   };
 
   const handleNext = () => {
+    if (isOverall && onToggleOverall) onToggleOverall(false);
     onDateChange(offsetDate(selectedDate || getTodayIso(), 1));
   };
 
   const handleToday = () => {
-    onDateChange(getTodayIso());
+    if (isOverall && onToggleOverall) onToggleOverall(false);
+    const todayIso = getTodayIso();
+    // If today exists in available dates, go to today
+    if (availableDates.includes(todayIso)) {
+      onDateChange(todayIso);
+      return;
+    }
+    // If today has no records, check if there are available dates and pick the latest one, else fallback to today
+    if (availableDates.length > 0) {
+      const sorted = [...availableDates].sort().reverse();
+      onDateChange(sorted[0]);
+    } else {
+      onDateChange(todayIso);
+    }
+  };
+
+  const handleOverall = () => {
+    if (onToggleOverall) {
+      onToggleOverall(!isOverall);
+    }
   };
 
   const openCalendar = () => {
@@ -27,8 +48,8 @@ export default function DateFilter({ selectedDate, onDateChange, availableDates 
     }
   };
 
-  const display = formatDisplayDate(selectedDate || getTodayIso());
-  const hasData = availableDates.includes(selectedDate);
+  const display = isOverall ? 'All Time (Overall)' : formatDisplayDate(selectedDate || getTodayIso());
+  const hasData = isOverall || availableDates.includes(selectedDate);
 
   return (
     <div style={{
@@ -70,10 +91,10 @@ export default function DateFilter({ selectedDate, onDateChange, availableDates 
         onClick={handleToday}
         style={{
           padding: '4px 10px',
-          background: '#f1f5f9',
+          background: (!isOverall) ? '#e0e7ff' : '#f1f5f9',
           border: 'none',
           borderRadius: '6px',
-          color: '#4f46e5',
+          color: (!isOverall) ? '#4338ca' : '#475569',
           fontWeight: '600',
           fontSize: '13px',
           cursor: 'pointer'
@@ -81,6 +102,28 @@ export default function DateFilter({ selectedDate, onDateChange, availableDates 
       >
         Today
       </button>
+
+      {/* Overall Filter Button (if enabled) */}
+      {onToggleOverall && (
+        <button
+          type="button"
+          onClick={handleOverall}
+          title="Show Overall Summary (All dates combined)"
+          style={{
+            padding: '4px 10px',
+            background: isOverall ? '#4f46e5' : '#f1f5f9',
+            border: 'none',
+            borderRadius: '6px',
+            color: isOverall ? '#ffffff' : '#4f46e5',
+            fontWeight: '600',
+            fontSize: '13px',
+            cursor: 'pointer',
+            transition: 'all 0.2s'
+          }}
+        >
+          Overall
+        </button>
+      )}
 
       {/* Next Day Button */}
       <button

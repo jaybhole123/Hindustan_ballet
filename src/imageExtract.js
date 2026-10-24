@@ -1,5 +1,6 @@
 const API_URL = 'https://api.openai.com/v1/chat/completions';
-const MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o';
+const MODEL = import.meta.env.OCR_MODEL || import.meta.env.VITE_OCR_MODEL || import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o';
+const VERIFY_MODEL = import.meta.env.OCR_VERIFY_MODEL || import.meta.env.VITE_OCR_VERIFY_MODEL || MODEL;
 
 // Optimize image before uploading to keep crisp clarity for small numbers while keeping payload reasonable
 export const fileToDataUrl = file => new Promise((resolve, reject) => {
@@ -32,14 +33,14 @@ export const fileToDataUrl = file => new Promise((resolve, reject) => {
   rd.readAsDataURL(file);
 });
 
-async function callJson(system, userText, imageUrl) {
-  const key = import.meta.env.VITE_OPENAI_API_KEY;
-  if (!key) throw new Error('VITE_OPENAI_API_KEY set nahi hai (.env file check karo, phir dev server restart karo).');
+async function callJson(system, userText, imageUrl, model = MODEL) {
+  const key = import.meta.env.OPENAI_API_KEY || import.meta.env.VITE_OPENAI_API_KEY;
+  if (!key) throw new Error('OPENAI_API_KEY set nahi hai (.env file check karo, phir dev server restart karo).');
   const res = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -114,7 +115,8 @@ against the image. Fix only real mismatches (misread digits, swapped columns, mi
     `Extracted JSON:\n${JSON.stringify(extracted)}\n\nJSON shape reference:\n${SHAPES[kind]}\n\n` +
     `Reply with: { "issues": [{ "field": "where, e.g. raw[2].consumed", "was": value, "now": value, "reason": "short reason" }], "corrected": <full JSON in the same shape, with all fixes applied> }.\n` +
     `If everything matches the image, reply { "issues": [], "corrected": <the same JSON> }.`,
-    imageUrl
+    imageUrl,
+    VERIFY_MODEL
   );
   return { issues: Array.isArray(out.issues) ? out.issues : [], corrected: out.corrected || extracted };
 }
@@ -124,7 +126,7 @@ export async function extractAndVerify(kind, file, onStage = () => {}) {
   const imageUrl = await fileToDataUrl(file);
   onStage('Extracting data from image…');
   const extracted = await extractFromImage(kind, imageUrl);
-  return { data: extracted, issues: [], verifyError: null };
+  return { data: extracted, issues: [], verifyError: null, imageUrl };
 }
 
 export const formatIssue = i => `${i.field}: ${JSON.stringify(i.was)} → ${JSON.stringify(i.now)}${i.reason ? ` (${i.reason})` : ''}`;

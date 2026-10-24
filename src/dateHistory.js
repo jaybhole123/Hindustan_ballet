@@ -1,8 +1,9 @@
 // Helper for normalising and storing/retrieving history by date
 export function normalizeDate(str) {
   if (!str) return '';
-  const cleaned = String(str).trim();
-  // Match formats like 21/10/2026, 21.10.2026, 21-10-2026, 2026-10-21
+  // Remove spaces around slashes, dots, and hyphens: "13 / 10 / 2026" -> "13/10/2026"
+  const cleaned = String(str).trim().replace(/\s*([\/\.-])\s*/g, '$1');
+  // Match formats like 21/10/2026, 21.10.2026, 21-10-2026
   const dmy = cleaned.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
   if (dmy) {
     const d = dmy[1].padStart(2, '0');

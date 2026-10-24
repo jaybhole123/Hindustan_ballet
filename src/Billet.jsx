@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Printer, FileDown, Save, Check, Edit2, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Printer, FileDown, Save, Check, Edit2, Trash2, RotateCcw, AlertTriangle, Eye, X, Image as ImageIcon } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
 import DateFilter from './DateFilter';
 import { normalizeDate, getTodayIso, getHistory, saveToHistory } from './dateHistory';
+import ImagePreviewModal from './ImagePreviewModal';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
@@ -192,6 +193,7 @@ export default function Billet() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isImgOver, setIsImgOver] = useState(false);
   const [imgStatus, setImgStatus] = useState('');
+  const [showImageModal, setShowImageModal] = useState(false);
   const [showAddForm, setShowAddForm] = useState(null);
   const [editIndex, setEditIndex] = useState(null);
   const [addFormData, setAddFormData] = useState({ name: '', opening: 0, production: 0, despatch: 0, transfer: 0, remarks: '' });
@@ -294,7 +296,7 @@ export default function Billet() {
     if (!file) return;
     if (!file.type.startsWith('image/')) { alert('Please select an image file (png, jpg, webp).'); return; }
     try {
-      const { data: ex, issues, verifyError } = await extractAndVerify('billet', file, setImgStatus);
+      const { data: ex, issues, verifyError, imageUrl } = await extractAndVerify('billet', file, setImgStatus);
       const secs = (ex.sizes || []).map(s => ({
         size: String(s.size || '').replace(/^\s*size\s*/i, '').trim(),
         fileTotals: s.fileTotals || null,
@@ -305,6 +307,7 @@ export default function Billet() {
       })).filter(s => s.items.length);
       if (!secs.length) { alert('Image me expected data nahi mila.'); return; }
       const report = buildReport(ex.title || '', ex.date || '', secs, 'image');
+      report.imageUrl = imageUrl;
       report.verifyNotes = issues.map(i => `Verifier correction — ${formatIssue(i)}`);
       if (verifyError) report.verifyNotes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
       report.verified = !verifyError && !issues.length;
@@ -416,6 +419,23 @@ export default function Billet() {
             <button onClick={downloadCsv} style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', color: 'var(--ink)'}}>
               <FileDown size={16} /> Download Excel
             </button>
+            {data.imageUrl && (
+              <button 
+                type="button"
+                onClick={() => setShowImageModal(true)}
+                style={{
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px', 
+                  background: '#f8fafc', 
+                  color: '#4f46e5',
+                  border: '1px solid #c7d2fe',
+                  fontWeight: '600'
+                }}
+              >
+                <Eye size={16} /> View Image
+              </button>
+            )}
             <button 
               onClick={handleSaveData} 
               style={{
@@ -683,6 +703,14 @@ export default function Billet() {
           </div>
         </div>
       )}
+
+      {/* Image Preview Modal with Zoom In / Zoom Out */}
+      <ImagePreviewModal
+        isOpen={showImageModal}
+        onClose={() => setShowImageModal(false)}
+        imageUrl={data?.imageUrl}
+        title={`Uploaded Billet Report Image (${data?.date || selectedDate})`}
+      />
     </div>
   );
 }

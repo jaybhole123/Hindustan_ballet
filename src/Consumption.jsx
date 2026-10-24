@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Printer, FileDown, Plus, X, Edit2, Trash2, Save, Check, RotateCcw, AlertTriangle, Eye, Image as ImageIcon } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { extractAndVerify, formatIssue } from './imageExtract';
 import DateFilter from './DateFilter';
 import { normalizeDate, getTodayIso, getHistory, saveToHistory } from './dateHistory';
+import ImagePreviewModal from './ImagePreviewModal';
 
 const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const has = v => v !== null && v !== undefined && String(v).trim() !== '';
@@ -162,6 +163,7 @@ function Consumption() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isImgOver, setIsImgOver] = useState(false);
   const [imgStatus, setImgStatus] = useState('');
+  const [showImageModal, setShowImageModal] = useState(false);
   const [showSumMenu, setShowSumMenu] = useState(false);
   const [sumCols, setSumCols] = useState({
     totalProd: true, finishProd: true, stdLoss: true, loss2: true, avgYield: true, totalHeat: true, mnYield: true, totalCons: true
@@ -302,7 +304,7 @@ function Consumption() {
     if (!file) return;
     if (!file.type.startsWith('image/')) { alert('Please select an image file (png, jpg, webp).'); return; }
     try {
-      const { data: ex, issues, verifyError } = await extractAndVerify('consumption', file, setImgStatus);
+      const { data: ex, issues, verifyError, imageUrl } = await extractAndVerify('consumption', file, setImgStatus);
       const s = ex.summary || {};
       const S = {
         totalProd: num(s.totalProd), finishProd: num(s.finishProd), totalHeat: num(s.totalHeat), mnYield: num(s.mnYield), totalCons: num(s.totalCons),
@@ -318,7 +320,7 @@ function Consumption() {
       if (!raw.length && !charge.length) { alert('Image me expected data nahi mila.'); return; }
       const notes = issues.map(i => `Verifier correction — ${formatIssue(i)}`);
       if (verifyError) notes.push(`Verification fail hui, data unverified hai: ${verifyError}`);
-      setData({ ...buildData(ex.date || '', raw, charge, S), verifyNotes: notes, verified: !verifyError && !issues.length });
+      setData({ ...buildData(ex.date || '', raw, charge, S), verifyNotes: notes, verified: !verifyError && !issues.length, imageUrl });
       if (ex.date) {
         const d = normalizeDate(ex.date);
         if (d) setSelectedDate(d);
@@ -466,6 +468,23 @@ function Consumption() {
             <button onClick={downloadCsv} style={{display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', color: 'var(--ink)'}}>
               <FileDown size={16} /> Download Excel
             </button>
+            {data.imageUrl && (
+              <button 
+                type="button"
+                onClick={() => setShowImageModal(true)}
+                style={{
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px', 
+                  background: '#f8fafc', 
+                  color: '#4f46e5',
+                  border: '1px solid #c7d2fe',
+                  fontWeight: '600'
+                }}
+              >
+                <Eye size={16} /> View Image
+              </button>
+            )}
             <button 
               onClick={handleSaveData} 
               style={{
@@ -870,6 +889,14 @@ function Consumption() {
           </div>
         </div>
       )}
+
+      {/* Image Preview Modal with Zoom In / Zoom Out */}
+      <ImagePreviewModal
+        isOpen={showImageModal}
+        onClose={() => setShowImageModal(false)}
+        imageUrl={data?.imageUrl}
+        title={`Uploaded Consumption Report Image (${data?.date || selectedDate})`}
+      />
     </div>
   );
 }

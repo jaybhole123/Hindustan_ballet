@@ -1,24 +1,213 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Box, TrendingUp, Package } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import DateFilter from './DateFilter';
+import { normalizeDate, getTodayIso, getHistory } from './dateHistory';
 import './App.css';
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#f43f5e', '#84cc16'];
 
 export default function Dashboard() {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const cd = localStorage.getItem('consumptionData');
+    if (cd) {
+      try {
+        const p = JSON.parse(cd);
+        if (p.date) return normalizeDate(p.date);
+      } catch (e) {}
+    }
+    const bd = localStorage.getItem('billetData');
+    if (bd) {
+      try {
+        const p = JSON.parse(bd);
+        if (p.date) return normalizeDate(p.date);
+      } catch (e) {}
+    }
+    return getTodayIso();
+  });
+
+  const [isOverall, setIsOverall] = useState(false);
   const [consData, setConsData] = useState(null);
   const [billetData, setBilletData] = useState(null);
 
+  // Available dates for DateFilter dot indicator
+  const consHist = getHistory('consumptionHistory');
+  const billetHist = getHistory('billetHistory');
+  const availableDates = Array.from(new Set([
+    ...Object.keys(consHist).map(k => normalizeDate(k)),
+    ...Object.keys(billetHist).map(k => normalizeDate(k))
+  ])).filter(Boolean);
+
+  // Include active saved report date if available
+  try {
+    const cd = localStorage.getItem('consumptionData');
+    if (cd) {
+      const p = JSON.parse(cd);
+      if (p.date) {
+        const nd = normalizeDate(p.date);
+        if (nd && !availableDates.includes(nd)) availableDates.push(nd);
+      }
+    }
+  } catch (e) {}
+
+  // Compute Overall or Date-specific data
   useEffect(() => {
-    try {
-      const c = localStorage.getItem('consumptionData');
-      if (c) setConsData(JSON.parse(c));
-    } catch (e) {}
-    try {
-      const b = localStorage.getItem('billetData');
-      if (b) setBilletData(JSON.parse(b));
-    } catch (e) {}
-  }, []);
+    const currentConsHist = getHistory('consumptionHistory');
+    const currentBilletHist = getHistory('billetHistory');
+
+    if (isOverall) {
+      // 1. Combine All Dates for Overall Consumption
+      const allCons = Object.values(currentConsHist);
+      if (allCons.length === 0) {
+        // Fallback to active single report
+        const saved = localStorage.getItem('consumptionData');
+        if (saved) {
+          try { allCons.push(JSON.parse(saved)); } catch (e) {}
+        }
+      }
+
+      let combinedCons = null;
+      if (allCons.length > 0) {
+        const summary = {
+          totalHeat: 0,
+          totalCons: 0,
+          finishProd: 0,
+          totalProd: 0,
+          mnYield: 0,
+          avgYield: 0
+        };
+        const rawMap = {};
+        const chargeMap = {};
+
+        allCons.forEach(c => {
+          summary.totalHeat += Number(c.summary?.totalHeat || 0);
+          summary.totalCons += Number(c.summary?.totalCons || 0);
+          summary.finishProd += Number(c.summary?.finishProd || 0);
+          summary.totalProd += Number(c.summary?.totalProd || 0);
+
+          (c.raw || []).forEach(r => {
+            const name = r.name || 'Unknown';
+            if (!rawMap[name]) rawMap[name] = { ...r, consumed: 0, opening: 0, closing: 0 };
+            rawMap[name].consumed += Number(r.consumed || 0);
+            rawMap[name].closing += Number(r.closing || 0);
+          });
+
+          (c.charge || []).forEach(ch => {
+            const name = ch.name || 'Unknown';
+            if (!chargeMap[name]) chargeMap[name] = { ...ch, consumed: 0, opening: 0, closing: 0 };
+            chargeMap[name].consumed += Number(ch.consumed || 0);
+            chargeMap[name].closing += Number(ch.closing || 0);
+          });
+        });
+
+        summary.avgYield = summary.totalCons ? (summary.totalProd / summary.totalCons) * 100 : 0;
+        summary.mnYield = allCons.reduce((acc, c) => acc + Number(c.summary?.mnYield || 0), 0) / (allCons.length || 1);
+
+        combinedCons = {
+          date: 'All Time Overall',
+          summary,
+          raw: Object.values(rawMap),
+          charge: Object.values(chargeMap)
+        };
+      }
+
+      // 2. Combine All Dates for Overall Billet
+      const allBillet = Object.values(currentBilletHist);
+      if (allBillet.length === 0) {
+        const saved = localStorage.getItem('billetData');
+        if (saved) {
+          try { allBillet.push(JSON.parse(saved)); } catch (e) {}
+        }
+      }
+
+      let combinedBillet = null;
+      if (allBillet.length > 0) {
+        const grand = { opening: 0, production: 0, despatch: 0, transfer: 0, closing: 0 };
+        const sizeMap = {};
+
+        allBillet.forEach(b => {
+          grand.opening += Number(b.grand?.opening || 0);
+          grand.production += Number(b.grand?.production || 0);
+          grand.despatch += Number(b.grand?.despatch || 0);
+          grand.transfer += Number(b.grand?.transfer || 0);
+          grand.closing += Number(b.grand?.closing || 0);
+
+          (b.sizes || []).forEach(s => {
+            const sz = s.size || 'Standard';
+            if (!sizeMap[sz]) {
+              sizeMap[sz] = {
+                size: sz,
+                totals: { opening: 0, production: 0, despatch: 0, transfer: 0, closing: 0 }
+              };
+            }
+            sizeMap[sz].totals.opening += Number(s.totals?.opening || 0);
+            sizeMap[sz].totals.production += Number(s.totals?.production || 0);
+            sizeMap[sz].totals.despatch += Number(s.totals?.despatch || 0);
+            sizeMap[sz].totals.transfer += Number(s.totals?.transfer || 0);
+            sizeMap[sz].totals.closing += Number(s.totals?.closing || 0);
+          });
+        });
+
+        combinedBillet = {
+          date: 'All Time Overall',
+          grand,
+          sizes: Object.values(sizeMap)
+        };
+      }
+
+      setConsData(combinedCons);
+      setBilletData(combinedBillet);
+    } else {
+      // Single Date Lookup
+      let cData = currentConsHist[selectedDate] || null;
+      let bData = currentBilletHist[selectedDate] || null;
+
+      if (!cData) {
+        const matchKey = Object.keys(currentConsHist).find(k => normalizeDate(k) === selectedDate);
+        if (matchKey) cData = currentConsHist[matchKey];
+      }
+      if (!bData) {
+        const matchKey = Object.keys(currentBilletHist).find(k => normalizeDate(k) === selectedDate);
+        if (matchKey) bData = currentBilletHist[matchKey];
+      }
+
+      // Fallback to active report if date matches or if single report exists
+      if (!cData) {
+        const saved = localStorage.getItem('consumptionData');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (normalizeDate(parsed.date) === selectedDate || !parsed.date) {
+              cData = parsed;
+            }
+          } catch (e) {}
+        }
+      }
+      if (!bData) {
+        const saved = localStorage.getItem('billetData');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (normalizeDate(parsed.date) === selectedDate || !parsed.date) {
+              bData = parsed;
+            }
+          } catch (e) {}
+        }
+      }
+
+      setConsData(cData);
+      setBilletData(bData);
+    }
+  }, [selectedDate, isOverall]);
+
+  const handleDateChange = (newIsoDate) => {
+    setIsOverall(false);
+    setSelectedDate(newIsoDate);
+  };
+
+  const handleToggleOverall = (val) => {
+    setIsOverall(typeof val === 'boolean' ? val : !isOverall);
+  };
 
   const totalProduction = billetData?.grand?.production || consData?.summary?.totalProd || 0;
   const avgYield = consData?.summary?.avgYield || 0;
@@ -38,13 +227,28 @@ export default function Dashboard() {
   const consChartData = consData ? [...(consData.raw || []), ...(consData.charge || [])]
     .filter(x => x.consumed > 0)
     .sort((a, b) => b.consumed - a.consumed)
-    .slice(0, 8) // top 8 materials
+    .slice(0, 8)
     .map(x => ({ name: x.name, value: x.consumed })) : [];
 
   return (
-    <div className="dashboard">
-      <h1 className="page-title">Dashboard Overview</h1>
-      <p className="page-subtitle">Welcome back! Here's what's happening today in the plant.</p>
+    <div className="dashboard" style={{ paddingBottom: '40px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+        <div>
+          <h1 className="page-title" style={{ margin: '0 0 4px' }}>Dashboard Overview</h1>
+          <p className="page-subtitle" style={{ margin: 0 }}>
+            {isOverall 
+              ? 'Showing cumulative summary across all available records.' 
+              : "Welcome back! Here's what's happening today in the plant."}
+          </p>
+        </div>
+        <DateFilter 
+          selectedDate={selectedDate} 
+          onDateChange={handleDateChange} 
+          availableDates={availableDates}
+          isOverall={isOverall}
+          onToggleOverall={handleToggleOverall}
+        />
+      </div>
       
       <div className="erp-kpis">
         <div className="erp-kpi-card">
@@ -88,7 +292,7 @@ export default function Dashboard() {
               <li style={{display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--line)', marginTop: '8px', paddingTop: '8px'}}><strong>Finish Production:</strong> <span>{fmt(consData.summary?.finishProd || 0)} MT</span></li>
             </ul>
           ) : (
-            <p style={{color: 'var(--mute)', fontSize: '14px'}}>No consumption data available. Upload Excel in Consumption Report.</p>
+            <p style={{color: 'var(--mute)', fontSize: '14px'}}>No consumption data available for {selectedDate}.</p>
           )}
         </div>
         
@@ -102,7 +306,7 @@ export default function Dashboard() {
               <li style={{display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--line)', marginTop: '8px', paddingTop: '8px'}}><strong>Total Transfer:</strong> <span>{fmt(billetData.grand?.transfer || 0)} MT</span></li>
             </ul>
           ) : (
-            <p style={{color: 'var(--mute)', fontSize: '14px'}}>No billet data available. Upload Excel in Billet Report.</p>
+            <p style={{color: 'var(--mute)', fontSize: '14px'}}>No billet data available for {selectedDate}.</p>
           )}
         </div>
       </div>
